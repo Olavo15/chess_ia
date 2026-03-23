@@ -1,0 +1,410 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Chess IA</title>
+
+    <link rel="stylesheet" href="/static/css/chessboard-1.0.0.css" />
+
+    <style>
+      body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+        background: #1f1f1f;
+        color: #fff;
+      }
+
+      .layout {
+        display: flex;
+        gap: 24px;
+        align-items: flex-start;
+        justify-content: center;
+        padding: 24px;
+      }
+
+      .left-panel {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+
+      #board {
+        width: 520px;
+        margin-top: 16px;
+      }
+
+      .actions {
+        display: flex;
+        gap: 12px;
+        margin-top: 12px;
+      }
+
+      button {
+        background: #3a3a3a;
+        color: #fff;
+        border: none;
+        border-radius: 8px;
+        padding: 10px 14px;
+        cursor: pointer;
+      }
+
+      .right-panel {
+        width: 300px;
+        background: #2b2b2b;
+        border-radius: 12px;
+        padding: 16px;
+      }
+
+      .status {
+        min-height: 24px;
+        margin-bottom: 12px;
+        font-weight: bold;
+      }
+
+      .move-list {
+        max-height: 460px;
+        overflow-y: auto;
+        background: #1a1a1a;
+        border-radius: 8px;
+        padding: 8px;
+      }
+
+      .move-row {
+        display: grid;
+        grid-template-columns: 40px 1fr 1fr;
+        gap: 8px;
+        padding: 6px 8px;
+        border-bottom: 1px solid #333;
+        font-size: 14px;
+      }
+
+      .move-row:last-child {
+        border-bottom: none;
+      }
+
+      .last-move {
+        box-shadow: inset 0 0 0 9999px rgba(255, 215, 0, 0.28);
+      }
+
+      .legal-target {
+        box-shadow: inset 0 0 0 9999px rgba(80, 200, 120, 0.32);
+      }
+
+      .legal-source {
+        box-shadow: inset 0 0 0 9999px rgba(80, 160, 255, 0.32);
+      }
+
+      .promotion-modal {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.6);
+        display: none;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .promotion-box {
+        background: #2b2b2b;
+        border-radius: 12px;
+        padding: 16px;
+        text-align: center;
+      }
+
+      .promotion-options {
+        display: flex;
+        gap: 12px;
+        margin-top: 12px;
+      }
+
+      .promotion-btn {
+        background: #3a3a3a;
+        border: none;
+        border-radius: 10px;
+        padding: 10px;
+        cursor: pointer;
+      }
+
+      .promotion-btn img {
+        width: 54px;
+        height: 54px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="layout">
+      <div class="left-panel">
+        <h1>♟️ Chess IA</h1>
+        <div id="board"></div>
+        <div class="actions">
+          <button id="reset-btn">Reiniciar</button>
+        </div>
+      </div>
+
+      <div class="right-panel">
+        <div id="status" class="status"></div>
+        <h3>Histórico</h3>
+        <div id="move-list" class="move-list"></div>
+      </div>
+    </div>
+
+    <div id="promotion-modal" class="promotion-modal">
+      <div class="promotion-box">
+        <div>Escolha a peça para promoção</div>
+        <div id="promotion-options" class="promotion-options"></div>
+      </div>
+    </div>
+
+    <script src="/static/js/jquery-3.4.1.min.js"></script>
+    <script src="/static/js/chessboard-1.0.0.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.12.0/chess.min.js"></script>
+
+    <script>
+      let boardWidget = null;
+      let game = new Chess("{{ fen }}");
+      let currentFen = "{{ fen }}";
+
+      const statusEl = document.getElementById("status");
+      const moveListEl = document.getElementById("move-list");
+      const promotionModal = document.getElementById("promotion-modal");
+      const promotionOptions = document.getElementById("promotion-options");
+      const resetBtn = document.getElementById("reset-btn");
+
+      const initialHistory = {{ history | tojson }};
+
+      function squareEl(square) {
+        return document.querySelector(`#board .square-${square}`);
+      }
+
+      function addClassToSquare(square, className) {
+        const el = squareEl(square);
+        if (el) el.classList.add(className);
+      }
+
+      function clearLegalHighlights() {
+        document.querySelectorAll("#board .square-55d63").forEach((el) => {
+          el.classList.remove("legal-target", "legal-source");
+        });
+      }
+
+      function clearLastMoveHighlights() {
+        document.querySelectorAll("#board .square-55d63").forEach((el) => {
+          el.classList.remove("last-move");
+        });
+      }
+
+      function highlightLastMove(lastMove) {
+        clearLastMoveHighlights();
+        if (!lastMove) return;
+        addClassToSquare(lastMove.from, "last-move");
+        addClassToSquare(lastMove.to, "last-move");
+      }
+
+      async function fetchLegalMoves(square) {
+        const res = await fetch(`/legal_moves?square=${encodeURIComponent(square)}`);
+        return await res.json();
+      }
+
+      async function showLegalMoves(square, piece) {
+        clearLegalHighlights();
+        if (!piece || !piece.startsWith("w")) return;
+
+        const moves = await fetchLegalMoves(square);
+        if (!moves.length) return;
+
+        addClassToSquare(square, "legal-source");
+        moves.forEach((move) => addClassToSquare(move.to, "legal-target"));
+      }
+
+      function renderHistory(history) {
+        moveListEl.innerHTML = "";
+
+        for (let i = 0; i < history.length; i += 2) {
+          const white = history[i];
+          const black = history[i + 1];
+
+          const row = document.createElement("div");
+          row.className = "move-row";
+
+          const index = document.createElement("div");
+          index.textContent = `${Math.floor(i / 2) + 1}.`;
+
+          const whiteMove = document.createElement("div");
+          whiteMove.textContent = white ? white.san : "";
+
+          const blackMove = document.createElement("div");
+          blackMove.textContent = black ? black.san : "";
+
+          row.appendChild(index);
+          row.appendChild(whiteMove);
+          row.appendChild(blackMove);
+          moveListEl.appendChild(row);
+        }
+      }
+
+      function updateStatus(data = null) {
+        if (data?.game_status === "checkmate") {
+          const vencedor = data.winner === "white" ? "Brancas" : "Pretas";
+          statusEl.textContent = `Checkmate — ${vencedor} venceram`;
+          return;
+        }
+
+        if (data?.game_status === "check") {
+          statusEl.textContent = "Check";
+          return;
+        }
+
+        if (data?.game_status === "stalemate") {
+          statusEl.textContent = "Afogamento";
+          return;
+        }
+
+        if (data?.game_status === "draw") {
+          statusEl.textContent = "Empate";
+          return;
+        }
+
+        statusEl.textContent = "Sua vez";
+      }
+
+      function isPromotionMove(source, target) {
+        const moves = game.moves({ square: source, verbose: true });
+        return moves.some(
+          (m) =>
+            m.from === source &&
+            m.to === target &&
+            (m.flags.includes("p") || m.promotion)
+        );
+      }
+
+      function askPromotionPiece(colorPrefix) {
+        return new Promise((resolve) => {
+          promotionOptions.innerHTML = "";
+
+          ["q", "r", "b", "n"].forEach((piece) => {
+            const btn = document.createElement("button");
+            btn.className = "promotion-btn";
+
+            const img = document.createElement("img");
+            img.src = `/static/img/chesspieces/wikipedia/${colorPrefix}${piece.toUpperCase()}.png`;
+
+            btn.appendChild(img);
+            btn.addEventListener("click", () => {
+              promotionModal.style.display = "none";
+              resolve(piece);
+            });
+
+            promotionOptions.appendChild(btn);
+          });
+
+          promotionModal.style.display = "flex";
+        });
+      }
+
+      function onDragStart(source, piece) {
+        if (game.game_over()) return false;
+        if (piece.startsWith("b")) return false;
+        showLegalMoves(source, piece);
+      }
+
+      async function onDrop(source, target, piece) {
+        clearLegalHighlights();
+
+        let promotion = undefined;
+
+        if (isPromotionMove(source, target)) {
+          promotion = await askPromotionPiece("w");
+        }
+
+        const localMove = game.move({
+          from: source,
+          to: target,
+          promotion: promotion || "q",
+        });
+
+        if (localMove === null) {
+          return "snapback";
+        }
+
+        const moveUci = localMove.from + localMove.to + (localMove.promotion || "");
+
+        try {
+          const res = await fetch("/move", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: "move=" + encodeURIComponent(moveUci),
+          });
+
+          const data = await res.json();
+
+          if (data.status !== "ok") {
+            game.undo();
+            return "snapback";
+          }
+
+          currentFen = data.fen;
+          game.load(data.fen);
+          boardWidget.position(data.fen, true);
+
+          renderHistory(data.history || []);
+          highlightLastMove(data.last_move);
+          updateStatus(data);
+
+          return;
+        } catch (e) {
+          game.undo();
+          return "snapback";
+        }
+      }
+
+      function onSnapEnd() {
+        boardWidget.position(game.fen());
+      }
+
+      function onMouseoverSquare(square, piece) {
+        showLegalMoves(square, piece);
+      }
+
+      function onMouseoutSquare() {
+        clearLegalHighlights();
+      }
+
+      async function resetGame() {
+        const res = await fetch("/reset", { method: "POST" });
+        const data = await res.json();
+
+        game = new Chess(data.fen);
+        currentFen = data.fen;
+        boardWidget.position(data.fen, false);
+        renderHistory(data.history || []);
+        highlightLastMove(data.last_move);
+        updateStatus(data);
+        clearLegalHighlights();
+      }
+
+      function initBoard() {
+        boardWidget = Chessboard("board", {
+          draggable: true,
+          position: game.fen(),
+          pieceTheme: "/static/img/chesspieces/wikipedia/{piece}.png",
+          onDragStart: onDragStart,
+          onDrop: onDrop,
+          onSnapEnd: onSnapEnd,
+          onMouseoverSquare: onMouseoverSquare,
+          onMouseoutSquare: onMouseoutSquare,
+        });
+
+        renderHistory(initialHistory);
+        if (initialHistory.length) {
+          highlightLastMove(initialHistory[initialHistory.length - 1]);
+        }
+        updateStatus();
+      }
+
+      resetBtn.addEventListener("click", resetGame);
+
+      initBoard();
+    </script>
+  </body>
+</html>
