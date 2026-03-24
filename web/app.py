@@ -1,5 +1,6 @@
 from io import StringIO
 import os
+import time
 import uuid
 
 from flask import Flask, render_template, request, jsonify, session
@@ -12,14 +13,33 @@ from engine.memory import init_db, learn_from_game, record_game
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "troque-essa-chave-em-producao")
 
+# Estado temporário por sessão.
+# Bom para hobby/protótipo, mas não substitui banco persistente.
 games = {}
 
 init_db()
 
 
-def get_game():
-    game_id = session.get("game_id")
+# =========================
+# GAME STORAGE PER SESSION
+# =========================
+def cleanup_games(max_age_seconds=1800):
+    now = time.time()
+    expired = []
 
+    for game_id, game in games.items():
+        last_access = game.get("last_access", now)
+        if now - last_access > max_age_seconds:
+            expired.append(game_id)
+
+    for game_id in expired:
+        del games[game_id]
+
+
+def get_game():
+    cleanup_games()
+
+    game_id = session.get("game_id")
     if not game_id:
         game_id = str(uuid.uuid4())
         session["game_id"] = game_id
@@ -30,11 +50,16 @@ def get_game():
             "move_history": [],
             "ai_experiences": [],
             "finished_processed": False,
+            "last_access": time.time(),
         }
 
+    games[game_id]["last_access"] = time.time()
     return games[game_id]
 
 
+# =========================
+# HELPERS
+# =========================
 def move_to_dict(move: chess.Move, san: str):
     return {
         "uci": move.uci(),
@@ -45,24 +70,24 @@ def move_to_dict(move: chess.Move, san: str):
     }
 
 
-def game_status_payload(current_board: chess.Board):
+def game_status_payload(board: chess.Board):
     status = None
     winner = None
 
-    if current_board.is_checkmate():
+    if board.is_checkmate():
         status = "checkmate"
-        winner = "white" if current_board.turn == chess.BLACK else "black"
-    elif current_board.is_check():
+        winner = "white" if board.turn == chess.BLACK else "black"
+    elif board.is_check():
         status = "check"
-    elif current_board.is_stalemate():
+    elif board.is_stalemate():
         status = "stalemate"
-    elif current_board.is_insufficient_material():
+    elif board.is_insufficient_material():
         status = "draw"
 
     return {
         "game_status": status,
         "winner": winner,
-        "result": current_board.result() if current_board.is_game_over() else "*",
+        "result": board.result() if board.is_game_over() else "*",
     }
 
 
@@ -82,6 +107,9 @@ def build_pgn_from_history(history):
     return exporter.getvalue()
 
 
+# =========================
+# LEARNING
+# =========================
 def apply_learning_if_game_over(game):
     board = game["board"]
     move_history = game["move_history"]
@@ -120,28 +148,28 @@ def apply_learning_if_game_over(game):
     return result
 
 
-def apply_learning_self_play(current_board, current_history, current_ai_experiences):
-    if not current_board.is_game_over():
+def apply_learning_self_play(board, history, experiences_by_side):
+    if not board.is_game_over():
         return None
 
-    result = current_board.result()
-    pgn_text = build_pgn_from_history(current_history)
+    result = board.result()
+    pgn_text = build_pgn_from_history(history)
     record_game(result, pgn_text)
 
     if result == "1-0":
-        learn_from_game(current_ai_experiences["white"], "win")
-        learn_from_game(current_ai_experiences["black"], "loss")
+        learn_from_game(experiences_by_side["white"], "win")
+        learn_from_game(experiences_by_side["black"], "loss")
     elif result == "0-1":
-        learn_from_game(current_ai_experiences["white"], "loss")
-        learn_from_game(current_ai_experiences["black"], "win")
+        learn_from_game(experiences_by_side["white"], "loss")
+        learn_from_game(experiences_by_side["black"], "win")
     else:
-        learn_from_game(current_ai_experiences["white"], "draw")
-        learn_from_game(current_ai_experiences["black"], "draw")
+        learn_from_game(experiences_by_side["white"], "draw")
+        learn_from_game(experiences_by_side["black"], "draw")
 
     return result
 
 
-def run_self_play_game(depth=2, max_moves=200):
+def run_self_play_game(depth=2, max_moves=150):
     training_board = chess.Board()
     training_history = []
     training_ai_experiences = {
@@ -162,8 +190,7 @@ def run_self_play_game(depth=2, max_moves=200):
         training_board.push(ai_move)
 
         training_history.append(move_to_dict(ai_move, san))
-        training_ai_experiences[side].append(exp)
-
+        training_ai_experiences[side].extend(exp)
         move_count += 1
 
     result = apply_learning_self_play(
@@ -185,14 +212,17 @@ def run_self_play_game(depth=2, max_moves=200):
 @app.route("/")
 def index():
     game = get_game()
-    board = game["board"]
-    move_history = game["move_history"]
 
     return render_template(
         "index.html",
-        fen=board.fen(),
-        history=move_history,
+        fen=game["board"].fen(),
+        history=game["move_history"],
     )
+
+
+@app.route("/health")
+def health():
+    return "ok", 200
 
 
 @app.route("/legal_moves")
@@ -201,7 +231,6 @@ def legal_moves():
     board = game["board"]
 
     square = request.args.get("square", "").strip()
-
     if not square:
         return jsonify([])
 
@@ -261,7 +290,7 @@ def move():
             board.push(ai_move)
             ai_move_data = move_to_dict(ai_move, ai_san)
             move_history.append(ai_move_data)
-            ai_experiences.append(exp)
+            ai_experiences.extend(exp)
 
         final_result = apply_learning_if_game_over(game)
 
@@ -282,7 +311,8 @@ def move():
 @app.route("/train_self_play", methods=["POST"])
 def train_self_play():
     data = request.get_json(silent=True) or {}
-    games_to_train = int(data.get("games", 10))
+
+    games_to_train = min(int(data.get("games", 10)), 50)
     depth = int(data.get("depth", 2))
 
     results = []
@@ -291,8 +321,8 @@ def train_self_play():
 
     return jsonify({
         "status": "ok",
-        "trained_games": games_to_train,
-        "results": results,
+        "trained_games": len(results),
+        "results": results[-5:],
     })
 
 
@@ -303,6 +333,7 @@ def reset():
     game["move_history"] = []
     game["ai_experiences"] = []
     game["finished_processed"] = False
+    game["last_access"] = time.time()
 
     payload = {
         "status": "ok",
@@ -316,18 +347,25 @@ def reset():
     payload.update(game_status_payload(game["board"]))
     return jsonify(payload)
 
+
 @app.route("/debug_memory")
 def debug_memory():
     from engine.memory import get_conn
 
     with get_conn() as conn:
-        games_count = conn.execute("SELECT COUNT(*) AS total FROM games").fetchone()["total"]
-        memory_count = conn.execute("SELECT COUNT(*) AS total FROM move_memory").fetchone()["total"]
+        games_count = conn.execute(
+            "SELECT COUNT(*) AS total FROM games"
+        ).fetchone()["total"]
+        memory_count = conn.execute(
+            "SELECT COUNT(*) AS total FROM move_memory"
+        ).fetchone()["total"]
 
     return jsonify({
         "saved_games": games_count,
         "learned_positions": memory_count,
     })
 
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)

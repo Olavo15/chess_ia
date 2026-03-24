@@ -2,11 +2,13 @@ import sqlite3
 from pathlib import Path
 import chess.polyglot
 
-DB_PATH = Path("data/chess_ai.db")
+BASE_DIR = Path(__file__).resolve().parent.parent
+DB_PATH = BASE_DIR / "data" / "chess_ai.db"
 
 
 def get_conn():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    print("USANDO BANCO EM:", DB_PATH)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
@@ -34,6 +36,7 @@ def init_db():
                 PRIMARY KEY (position_hash, move_uci)
             )
         """)
+        conn.commit()
 
 
 def position_hash(board):
@@ -80,13 +83,10 @@ def record_game(result, moves_pgn):
             "INSERT INTO games (result, moves_pgn) VALUES (?, ?)",
             (result, moves_pgn),
         )
+        conn.commit()
 
 
 def learn_from_game(experiences, result, alpha=0.2):
-    """
-    experiences = [(position_hash, move_uci), ...] só da IA
-    result: 'win', 'loss', 'draw'
-    """
     reward_map = {
         "win": 1.0,
         "loss": -1.0,
@@ -141,3 +141,5 @@ def learn_from_game(experiences, result, alpha=0.2):
                 """,
                 (pos_hash, move_uci, plays, wins, losses, draws, score),
             )
+
+        conn.commit()
