@@ -246,7 +246,9 @@ def legal_moves():
                 {
                     "from": square,
                     "to": chess.square_name(move.to_square),
-                    "promotion": chess.piece_symbol(move.promotion) if move.promotion else None,
+                    "promotion": (
+                        chess.piece_symbol(move.promotion) if move.promotion else None
+                    ),
                     "capture": board.is_capture(move),
                 }
             )
@@ -319,11 +321,13 @@ def train_self_play():
     for _ in range(games_to_train):
         results.append(run_self_play_game(depth=depth))
 
-    return jsonify({
-        "status": "ok",
-        "trained_games": len(results),
-        "results": results[-5:],
-    })
+    return jsonify(
+        {
+            "status": "ok",
+            "trained_games": len(results),
+            "results": results[-5:],
+        }
+    )
 
 
 @app.route("/reset", methods=["POST"])
@@ -353,17 +357,19 @@ def debug_memory():
     from engine.memory import get_conn
 
     with get_conn() as conn:
-        games_count = conn.execute(
-            "SELECT COUNT(*) AS total FROM games"
-        ).fetchone()["total"]
+        games_count = conn.execute("SELECT COUNT(*) AS total FROM games").fetchone()[
+            "total"
+        ]
         memory_count = conn.execute(
             "SELECT COUNT(*) AS total FROM move_memory"
         ).fetchone()["total"]
 
-    return jsonify({
-        "saved_games": games_count,
-        "learned_positions": memory_count,
-    })
+    return jsonify(
+        {
+            "saved_games": games_count,
+            "learned_positions": memory_count,
+        }
+    )
 
 
 if __name__ == "__main__":

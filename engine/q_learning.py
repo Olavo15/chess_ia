@@ -27,10 +27,7 @@ def choose_action(board, epsilon=0.2):
     if random.random() < epsilon or state not in Q_TABLE:
         return random.choice(moves)
 
-    return max(
-        moves,
-        key=lambda m: Q_TABLE[state].get(str(m), 0)
-    )
+    return max(moves, key=lambda m: Q_TABLE[state].get(str(m), 0))
 
 
 def update_q(state, action, reward, next_state, alpha=0.1, gamma=0.9):

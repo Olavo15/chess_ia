@@ -1,5 +1,6 @@
 import chess
 
+
 class ChessGame:
     def __init__(self):
         self.board = chess.Board()
@@ -18,9 +19,7 @@ class ChessGame:
         for rank in range(8, 0, -1):
             row = []
             for file in "abcdefgh":
-                piece = self.board.piece_at(
-                    chess.parse_square(file + str(rank))
-                )
+                piece = self.board.piece_at(chess.parse_square(file + str(rank)))
 
                 if piece:
                     color = "w" if piece.color else "b"

@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "Chess_ia"
+version = "0.1.6"
+description = ""
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+
+authors = [
+    { name = "Olavo Regis", email = "olavoregisdev@gmail.com" }
+]
+
+keywords = ["network", "scanner", "security", "nmap", "cli"]
+
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Operating System :: POSIX :: Linux",
+    "License :: OSI Approved :: MIT License",
+    "Intended Audience :: Developers",
+    "Topic :: ",
+    "Topic :: System :: Networking"
+]
+
+dependencies = []
+
+[project.scripts]
+pyscan = "pyscan.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pyscan*"]
+
+[tool.flake8]
+max-line-length = 200
+extend-ignore = ["E203", "W503"]
+exclude = [
+    ".git",
+    "__pycache__",
+    "venv",
+    ".venv",
+    "build",
+    "dist"
+]
