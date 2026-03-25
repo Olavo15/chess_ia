@@ -4,7 +4,6 @@ import chess
 
 from engine.memory import memory_bonus, position_hash
 
-
 PIECE_VALUES = {
     chess.PAWN: 100,
     chess.KNIGHT: 320,
@@ -15,7 +14,6 @@ PIECE_VALUES = {
 }
 
 CHECKMATE_SCORE = 100000
-
 
 
 def evaluate_position(board: chess.Board) -> int:
@@ -34,7 +32,6 @@ def evaluate_position(board: chess.Board) -> int:
     return score
 
 
-
 def order_moves(board: chess.Board, moves):
     def score_move(move):
         score = 0
@@ -43,7 +40,10 @@ def order_moves(board: chess.Board, moves):
             victim = board.piece_at(move.to_square)
             attacker = board.piece_at(move.from_square)
             if victim and attacker:
-                score += 10 * PIECE_VALUES[victim.piece_type] - PIECE_VALUES[attacker.piece_type]
+                score += (
+                    10 * PIECE_VALUES[victim.piece_type]
+                    - PIECE_VALUES[attacker.piece_type]
+                )
 
         if board.gives_check(move):
             score += 500
@@ -56,7 +56,9 @@ def order_moves(board: chess.Board, moves):
     return sorted(moves, key=score_move, reverse=True)
 
 
-def minimax(board: chess.Board, depth: int, alpha: float, beta: float, maximizing: bool) -> float:
+def minimax(
+    board: chess.Board, depth: int, alpha: float, beta: float, maximizing: bool
+) -> float:
     if depth == 0 or board.is_game_over():
         return evaluate_position(board)
 
