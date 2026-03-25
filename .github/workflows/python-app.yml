@@ -1,0 +1,59 @@
+# This workflow will install Python dependencies, run tests and lint with a single version of Python
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
+
+name: Python application
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest flake8 flake8-pyproject black bandit build
+          pip install -e .
+
+      - name: Check formatting
+        run: black --check .
+
+      - name: Lint
+        run: flake8 .
+
+      - name: Security check
+        run: bandit -r pyscan/
+
+      - name: Run tests
+        run: |
+          if [ -d "tests" ]; then
+            pytest
+          else
+            echo "No tests directory found. Skipping tests."
+          fi
+
+      - name: Build package
+        run: python -m build
