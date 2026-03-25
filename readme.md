@@ -80,7 +80,7 @@ chess_ia/
 - [ ] Melhorar heurística
 - [ ] Minimax + Alpha-Beta
 - [ ] Self-play automático
-- [ ] Aprendizado persistente
+- [ +- ] Aprendizado persistente
 
 ### 🎮 Gameplay
 
