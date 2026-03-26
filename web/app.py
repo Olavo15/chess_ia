@@ -1,4 +1,5 @@
 from io import StringIO
+from datetime import datetime
 import os
 import time
 import uuid
@@ -11,7 +12,13 @@ from engine.ai_player import choose_move
 from engine.memory import init_db, learn_from_game, record_game
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "troque-essa-chave-em-producao")
+
+secret = os.environ.get("SECRET_KEY")
+
+if not secret:
+    raise RuntimeError("SECRET_KEY não definida")
+
+app.secret_key = secret
 
 # Estado temporário por sessão.
 # Bom para hobby/protótipo, mas não substitui banco persistente.
@@ -91,8 +98,23 @@ def game_status_payload(board: chess.Board):
     }
 
 
-def build_pgn_from_history(history):
+def build_pgn_from_history(history, result="*", self_play=False):
     game = chess.pgn.Game()
+
+    game.headers["Event"] = "Chess IA"
+    game.headers["Site"] = "Render"
+    game.headers["Date"] = datetime.now().strftime("%Y.%m.%d")
+    game.headers["Round"] = str((len(history) + 1) // 2)
+
+    if self_play:
+        game.headers["White"] = "AI White"
+        game.headers["Black"] = "AI Black"
+    else:
+        game.headers["White"] = "Player"
+        game.headers["Black"] = "Chess IA"
+
+    game.headers["Result"] = result
+
     node = game
     temp_board = chess.Board()
 
@@ -122,7 +144,7 @@ def apply_learning_if_game_over(game):
         return board.result()
 
     result = board.result()
-    pgn_text = build_pgn_from_history(move_history)
+    pgn_text = build_pgn_from_history(move_history, result=result, self_play=False)
 
     print("SALVANDO PARTIDA:", result)
     print("TOTAL EXPERIÊNCIAS IA:", len(ai_experiences))
@@ -153,7 +175,7 @@ def apply_learning_self_play(board, history, experiences_by_side):
         return None
 
     result = board.result()
-    pgn_text = build_pgn_from_history(history)
+    pgn_text = build_pgn_from_history(history, result=result, self_play=True)
     record_game(result, pgn_text)
 
     if result == "1-0":
@@ -182,7 +204,7 @@ def run_self_play_game(depth=2, max_moves=150):
     while not training_board.is_game_over() and move_count < max_moves:
         side = "white" if training_board.turn == chess.WHITE else "black"
 
-        ai_move, exp = choose_move(training_board, depth=depth)
+        ai_move, exp = choose_move(training_board, depth=depth, use_memory=True)
         if ai_move is None:
             break
 
@@ -209,6 +231,9 @@ def run_self_play_game(depth=2, max_moves=150):
     }
 
 
+# =========================
+# ROUTES
+# =========================
 @app.route("/")
 def index():
     game = get_game()
@@ -286,7 +311,7 @@ def move():
 
         ai_move_data = None
         if not board.is_game_over():
-            ai_move, exp = choose_move(board, depth=2)
+            ai_move, exp = choose_move(board, depth=1, use_memory=False)
 
             if ai_move is not None:
                 ai_san = board.san(ai_move)

@@ -2,7 +2,7 @@ import math
 import random
 import chess
 
-from engine.memory import memory_bonus, position_hash, get_position_memory
+from engine.memory import get_position_memory, position_hash
 
 PIECE_VALUES = {
     chess.PAWN: 100,
@@ -24,7 +24,6 @@ def evaluate_position(board: chess.Board) -> int:
         return 0
 
     score = 0
-
     for piece_type, value in PIECE_VALUES.items():
         score += len(board.pieces(piece_type, chess.WHITE)) * value
         score -= len(board.pieces(piece_type, chess.BLACK)) * value
@@ -33,17 +32,16 @@ def evaluate_position(board: chess.Board) -> int:
 
 
 def order_moves(board: chess.Board, moves):
-    def score_move(move):
+    def move_score(move):
         score = 0
 
         if board.is_capture(move):
             victim = board.piece_at(move.to_square)
             attacker = board.piece_at(move.from_square)
             if victim and attacker:
-                score += (
-                    10 * PIECE_VALUES[victim.piece_type]
-                    - PIECE_VALUES[attacker.piece_type]
-                )
+                score += 10 * PIECE_VALUES[victim.piece_type] - PIECE_VALUES[attacker.piece_type]
+            else:
+                score += 200
 
         if board.gives_check(move):
             score += 500
@@ -53,12 +51,10 @@ def order_moves(board: chess.Board, moves):
 
         return score
 
-    return sorted(moves, key=score_move, reverse=True)
+    return sorted(moves, key=move_score, reverse=True)
 
 
-def minimax(
-    board: chess.Board, depth: int, alpha: float, beta: float, maximizing: bool
-) -> float:
+def minimax(board: chess.Board, depth: int, alpha: float, beta: float, maximizing: bool) -> float:
     if depth == 0 or board.is_game_over():
         return evaluate_position(board)
 
@@ -79,23 +75,28 @@ def minimax(
 
         return best
 
-    else:
-        best = math.inf
-        for move in moves:
-            board.push(move)
-            value = minimax(board, depth - 1, alpha, beta, True)
-            board.pop()
+    best = math.inf
+    for move in moves:
+        board.push(move)
+        value = minimax(board, depth - 1, alpha, beta, True)
+        board.pop()
 
-            best = min(best, value)
-            beta = min(beta, value)
+        best = min(best, value)
+        beta = min(beta, value)
 
-            if beta <= alpha:
-                break
+        if beta <= alpha:
+            break
 
-        return best
+    return best
 
 
-def choose_move(board: chess.Board, depth: int = 2):
+def choose_move(
+    board: chess.Board,
+    depth: int = 1,
+    use_memory: bool = True,
+    memory_weight: float = 0.35,
+    exploration_rate: float = 0.05,
+):
     legal_moves = list(board.legal_moves)
     if not legal_moves:
         return None, []
@@ -107,7 +108,11 @@ def choose_move(board: chess.Board, depth: int = 2):
     best_moves = []
     experiences = []
 
-    memory_map = get_position_memory(board)
+    try:
+        memory_map = get_position_memory(board) if use_memory else {}
+    except Exception as e:
+        print("ERRO carregando memória da posição:", e)
+        memory_map = {}
 
     for move in legal_moves:
         board.push(move)
@@ -116,14 +121,17 @@ def choose_move(board: chess.Board, depth: int = 2):
         calc_score = minimax(board, depth - 1, -math.inf, math.inf, not maximizing)
 
         learned = memory_map.get(move.uci(), 0.0)
+        adjusted_score = calc_score + (learned * memory_weight)
 
-        if maximizing:
-            total_score = calc_score + (learned * 2)
-        else:
-            total_score = calc_score - (learned * 2)
+        tactical_bonus = 0
+        if board.is_check():
+            tactical_bonus += 40
+
+        board.pop()
+
+        total_score = adjusted_score + tactical_bonus
 
         experiences.append((pos_hash, move.uci()))
-        board.pop()
 
         if maximizing:
             if total_score > best_score:
@@ -138,9 +146,13 @@ def choose_move(board: chess.Board, depth: int = 2):
             elif total_score == best_score:
                 best_moves.append(move)
 
-    chosen_move = (
-        random.choice(best_moves)
-        if random.random() >= 0.1
-        else random.choice(legal_moves)
-    )
+    if not best_moves:
+        best_moves = legal_moves
+
+
+    if random.random() < exploration_rate:
+        chosen_move = random.choice(legal_moves[: min(5, len(legal_moves))])
+    else:
+        chosen_move = random.choice(best_moves)
+
     return chosen_move, experiences
