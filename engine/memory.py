@@ -41,19 +41,16 @@ def init_db():
         cur = conn.cursor()
 
         if is_postgres():
-            cur.execute(
-                """
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS games (
                     id SERIAL PRIMARY KEY,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     result TEXT NOT NULL,
                     moves_pgn TEXT NOT NULL
                 )
-                """
-            )
+                """)
 
-            cur.execute(
-                """
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS move_memory (
                     position_hash TEXT NOT NULL,
                     move_uci TEXT NOT NULL,
@@ -64,22 +61,18 @@ def init_db():
                     score DOUBLE PRECISION NOT NULL DEFAULT 0,
                     PRIMARY KEY (position_hash, move_uci)
                 )
-                """
-            )
+                """)
         else:
-            cur.execute(
-                """
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS games (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     result TEXT NOT NULL,
                     moves_pgn TEXT NOT NULL
                 )
-                """
-            )
+                """)
 
-            cur.execute(
-                """
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS move_memory (
                     position_hash TEXT NOT NULL,
                     move_uci TEXT NOT NULL,
@@ -90,8 +83,7 @@ def init_db():
                     score REAL NOT NULL DEFAULT 0,
                     PRIMARY KEY (position_hash, move_uci)
                 )
-                """
-            )
+                """)
 
         conn.commit()
 

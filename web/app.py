@@ -101,7 +101,9 @@ def build_pgn_from_history(history, result="*", self_play=False):
     game = chess.pgn.Game()
 
     game.headers["Event"] = "Chess IA"
-    game.headers["Site"] = "Local" if not os.environ.get("DATABASE_URL") else "Production"
+    game.headers["Site"] = (
+        "Local" if not os.environ.get("DATABASE_URL") else "Production"
+    )
     game.headers["Date"] = datetime.now().strftime("%Y.%m.%d")
     game.headers["Round"] = str((len(history) + 1) // 2)
 
@@ -148,20 +150,30 @@ def apply_learning_if_game_over(game):
     print("SALVANDO PARTIDA:", result)
     print("TOTAL EXPERIÊNCIAS IA:", len(ai_experiences))
 
-    record_game(result, pgn_text)
+    try:
+        record_game(result, pgn_text)
+    except Exception as e:
+        print("ERRO AO SALVAR PARTIDA:", e)
 
-    if ai_experiences:
-        if result == "0-1":
-            learn_from_game(ai_experiences, "win")
-            print("IA aprendeu: vitória")
-        elif result == "1-0":
-            learn_from_game(ai_experiences, "loss")
-            print("IA aprendeu: derrota")
+    # Em produção, evita timeout no checkmate
+    # Aprendizado limitado só para não travar a resposta
+    try:
+        if ai_experiences:
+            limited_experiences = ai_experiences[-20:]  # pode testar 10, 20 ou 30
+
+            if result == "0-1":
+                learn_from_game(limited_experiences, "win")
+                print("IA aprendeu: vitória")
+            elif result == "1-0":
+                learn_from_game(limited_experiences, "loss")
+                print("IA aprendeu: derrota")
+            else:
+                learn_from_game(limited_experiences, "draw")
+                print("IA aprendeu: empate")
         else:
-            learn_from_game(ai_experiences, "draw")
-            print("IA aprendeu: empate")
-    else:
-        print("Nenhuma experiência da IA para aprender")
+            print("Nenhuma experiência da IA para aprender")
+    except Exception as e:
+        print("ERRO AO APRENDER:", e)
 
     game["finished_processed"] = True
     game["ai_experiences"] = []
@@ -253,13 +265,18 @@ def index():
 
 @app.route("/health")
 def health():
-    return jsonify(
-        {
-            "status": "ok",
-            "environment": "production" if os.environ.get("DATABASE_URL") else "development",
-            "database": "postgres" if os.environ.get("DATABASE_URL") else "sqlite",
-        }
-    ), 200
+    return (
+        jsonify(
+            {
+                "status": "ok",
+                "environment": (
+                    "production" if os.environ.get("DATABASE_URL") else "development"
+                ),
+                "database": "postgres" if os.environ.get("DATABASE_URL") else "sqlite",
+            }
+        ),
+        200,
+    )
 
 
 @app.route("/legal_moves")
@@ -418,8 +435,12 @@ def debug_memory():
             games_count = games_row["total"]
             memory_count = memory_row["total"]
         else:
-            games_count = games_row["total"] if "total" in games_row.keys() else games_row[0]
-            memory_count = memory_row["total"] if "total" in memory_row.keys() else memory_row[0]
+            games_count = (
+                games_row["total"] if "total" in games_row.keys() else games_row[0]
+            )
+            memory_count = (
+                memory_row["total"] if "total" in memory_row.keys() else memory_row[0]
+            )
 
         return jsonify(
             {
