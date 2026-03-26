@@ -1,6 +1,7 @@
 Flask
 python-chess
 gunicorn
+psycopg2-binary
 flake8
 black
 pytest
