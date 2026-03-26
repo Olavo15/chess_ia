@@ -138,5 +138,9 @@ def choose_move(board: chess.Board, depth: int = 2):
             elif total_score == best_score:
                 best_moves.append(move)
 
-    chosen_move = random.choice(best_moves) if random.random() >= 0.1 else random.choice(legal_moves)
+    chosen_move = (
+        random.choice(best_moves)
+        if random.random() >= 0.1
+        else random.choice(legal_moves)
+    )
     return chosen_move, experiences
