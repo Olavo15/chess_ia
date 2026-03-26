@@ -155,11 +155,9 @@ def apply_learning_if_game_over(game):
     except Exception as e:
         print("ERRO AO SALVAR PARTIDA:", e)
 
-    # Em produção, evita timeout no checkmate
-    # Aprendizado limitado só para não travar a resposta
     try:
         if ai_experiences:
-            limited_experiences = ai_experiences[-20:]  # pode testar 10, 20 ou 30
+            limited_experiences = ai_experiences[-20:]
 
             if result == "0-1":
                 learn_from_game(limited_experiences, "win")
