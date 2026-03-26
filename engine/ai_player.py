@@ -39,7 +39,10 @@ def order_moves(board: chess.Board, moves):
             victim = board.piece_at(move.to_square)
             attacker = board.piece_at(move.from_square)
             if victim and attacker:
-                score += 10 * PIECE_VALUES[victim.piece_type] - PIECE_VALUES[attacker.piece_type]
+                score += (
+                    10 * PIECE_VALUES[victim.piece_type]
+                    - PIECE_VALUES[attacker.piece_type]
+                )
             else:
                 score += 200
 
@@ -54,7 +57,9 @@ def order_moves(board: chess.Board, moves):
     return sorted(moves, key=move_score, reverse=True)
 
 
-def minimax(board: chess.Board, depth: int, alpha: float, beta: float, maximizing: bool) -> float:
+def minimax(
+    board: chess.Board, depth: int, alpha: float, beta: float, maximizing: bool
+) -> float:
     if depth == 0 or board.is_game_over():
         return evaluate_position(board)
 
@@ -148,7 +153,6 @@ def choose_move(
 
     if not best_moves:
         best_moves = legal_moves
-
 
     if random.random() < exploration_rate:
         chosen_move = random.choice(legal_moves[: min(5, len(legal_moves))])
