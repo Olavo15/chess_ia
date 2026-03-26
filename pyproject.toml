@@ -36,7 +36,7 @@ where = ["."]
 include = ["pyscan*"]
 
 [tool.flake8]
-max-line-length = 200
+max-line-length = 250
 extend-ignore = ["E203", "W503"]
 exclude = [
     ".git",

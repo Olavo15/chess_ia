@@ -365,12 +365,12 @@ def debug_memory():
     from engine.memory import get_conn
 
     with get_conn() as conn:
-        games_count = conn.execute("SELECT COUNT(*) AS total FROM games").fetchone()[
-            "total"
-        ]
-        memory_count = conn.execute(
-            "SELECT COUNT(*) AS total FROM move_memory"
-        ).fetchone()["total"]
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS total FROM games")
+            games_count = cur.fetchone()["total"]
+
+            cur.execute("SELECT COUNT(*) AS total FROM move_memory")
+            memory_count = cur.fetchone()["total"]
 
     return jsonify(
         {
