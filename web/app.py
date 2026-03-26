@@ -3,6 +3,9 @@ from datetime import datetime
 import os
 import time
 import uuid
+import threading
+import queue
+import traceback
 
 from flask import Flask, render_template, request, jsonify, session
 import chess
@@ -13,15 +16,96 @@ from engine.memory import init_db, learn_from_game, record_game, get_conn
 
 app = Flask(__name__)
 
-# Em produção: use SECRET_KEY do .env/plataforma
-# Em dev local: gera uma padrão para não quebrar o app
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-me")
 
-# Estado temporário por sessão.
-# Bom para hobby/protótipo, mas não substitui banco persistente.
 games = {}
 
 init_db()
+
+# =========================================================
+# BACKGROUND QUEUE
+# =========================================================
+learning_queue = queue.Queue()
+
+
+def learning_worker():
+    while True:
+        job = learning_queue.get()
+        try:
+            if job is None:
+                break
+
+            job_type = job.get("type")
+
+            if job_type == "player_vs_ai":
+                result = job["result"]
+                pgn_text = job["pgn_text"]
+                ai_experiences = job["ai_experiences"]
+
+                try:
+                    record_game(result, pgn_text)
+                    print(f"[BG] Partida salva: {result}")
+                except Exception as e:
+                    print(f"[BG] ERRO AO SALVAR PARTIDA: {e}")
+                    traceback.print_exc()
+
+                try:
+                    if ai_experiences:
+                        if result == "0-1":
+                            learn_from_game(ai_experiences, "win")
+                            print("[BG] IA aprendeu: vitória")
+                        elif result == "1-0":
+                            learn_from_game(ai_experiences, "loss")
+                            print("[BG] IA aprendeu: derrota")
+                        else:
+                            learn_from_game(ai_experiences, "draw")
+                            print("[BG] IA aprendeu: empate")
+                    else:
+                        print("[BG] Nenhuma experiência da IA para aprender")
+                except Exception as e:
+                    print(f"[BG] ERRO AO APRENDER: {e}")
+                    traceback.print_exc()
+
+            elif job_type == "self_play":
+                result = job["result"]
+                pgn_text = job["pgn_text"]
+                experiences_by_side = job["experiences_by_side"]
+
+                try:
+                    record_game(result, pgn_text)
+                    print(f"[BG] Self-play salvo: {result}")
+                except Exception as e:
+                    print(f"[BG] ERRO AO SALVAR SELF-PLAY: {e}")
+                    traceback.print_exc()
+
+                try:
+                    if result == "1-0":
+                        if experiences_by_side["white"]:
+                            learn_from_game(experiences_by_side["white"], "win")
+                        if experiences_by_side["black"]:
+                            learn_from_game(experiences_by_side["black"], "loss")
+                    elif result == "0-1":
+                        if experiences_by_side["white"]:
+                            learn_from_game(experiences_by_side["white"], "loss")
+                        if experiences_by_side["black"]:
+                            learn_from_game(experiences_by_side["black"], "win")
+                    else:
+                        if experiences_by_side["white"]:
+                            learn_from_game(experiences_by_side["white"], "draw")
+                        if experiences_by_side["black"]:
+                            learn_from_game(experiences_by_side["black"], "draw")
+
+                    print("[BG] Self-play aprendido com sucesso")
+                except Exception as e:
+                    print(f"[BG] ERRO AO APRENDER SELF-PLAY: {e}")
+                    traceback.print_exc()
+
+        finally:
+            learning_queue.task_done()
+
+
+worker_thread = threading.Thread(target=learning_worker, daemon=True)
+worker_thread.start()
 
 
 # =========================
@@ -147,31 +231,17 @@ def apply_learning_if_game_over(game):
     result = board.result()
     pgn_text = build_pgn_from_history(move_history, result=result, self_play=False)
 
-    print("SALVANDO PARTIDA:", result)
+    print("ENFILEIRANDO PARTIDA:", result)
     print("TOTAL EXPERIÊNCIAS IA:", len(ai_experiences))
 
-    try:
-        record_game(result, pgn_text)
-    except Exception as e:
-        print("ERRO AO SALVAR PARTIDA:", e)
-
-    try:
-        if ai_experiences:
-            limited_experiences = ai_experiences[-20:]
-
-            if result == "0-1":
-                learn_from_game(limited_experiences, "win")
-                print("IA aprendeu: vitória")
-            elif result == "1-0":
-                learn_from_game(limited_experiences, "loss")
-                print("IA aprendeu: derrota")
-            else:
-                learn_from_game(limited_experiences, "draw")
-                print("IA aprendeu: empate")
-        else:
-            print("Nenhuma experiência da IA para aprender")
-    except Exception as e:
-        print("ERRO AO APRENDER:", e)
+    learning_queue.put(
+        {
+            "type": "player_vs_ai",
+            "result": result,
+            "pgn_text": pgn_text,
+            "ai_experiences": list(ai_experiences),
+        }
+    )
 
     game["finished_processed"] = True
     game["ai_experiences"] = []
@@ -185,23 +255,18 @@ def apply_learning_self_play(board, history, experiences_by_side):
 
     result = board.result()
     pgn_text = build_pgn_from_history(history, result=result, self_play=True)
-    record_game(result, pgn_text)
 
-    if result == "1-0":
-        if experiences_by_side["white"]:
-            learn_from_game(experiences_by_side["white"], "win")
-        if experiences_by_side["black"]:
-            learn_from_game(experiences_by_side["black"], "loss")
-    elif result == "0-1":
-        if experiences_by_side["white"]:
-            learn_from_game(experiences_by_side["white"], "loss")
-        if experiences_by_side["black"]:
-            learn_from_game(experiences_by_side["black"], "win")
-    else:
-        if experiences_by_side["white"]:
-            learn_from_game(experiences_by_side["white"], "draw")
-        if experiences_by_side["black"]:
-            learn_from_game(experiences_by_side["black"], "draw")
+    learning_queue.put(
+        {
+            "type": "self_play",
+            "result": result,
+            "pgn_text": pgn_text,
+            "experiences_by_side": {
+                "white": list(experiences_by_side["white"]),
+                "black": list(experiences_by_side["black"]),
+            },
+        }
+    )
 
     return result
 
@@ -271,6 +336,7 @@ def health():
                     "production" if os.environ.get("DATABASE_URL") else "development"
                 ),
                 "database": "postgres" if os.environ.get("DATABASE_URL") else "sqlite",
+                "learning_queue_size": learning_queue.qsize(),
             }
         ),
         200,
@@ -365,8 +431,6 @@ def move():
         return jsonify(payload)
 
     except Exception as e:
-        import traceback
-
         print("ERRO NA ROTA /move:", e)
         traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -389,6 +453,7 @@ def train_self_play():
                 "status": "ok",
                 "trained_games": len(results),
                 "results": results[-5:],
+                "learning_queue_size": learning_queue.qsize(),
             }
         )
     except Exception as e:
@@ -445,6 +510,7 @@ def debug_memory():
                 "saved_games": games_count,
                 "learned_positions": memory_count,
                 "database": "postgres" if os.environ.get("DATABASE_URL") else "sqlite",
+                "learning_queue_size": learning_queue.qsize(),
             }
         )
     finally:
