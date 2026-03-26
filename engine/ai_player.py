@@ -2,7 +2,7 @@ import math
 import random
 import chess
 
-from engine.memory import memory_bonus, position_hash
+from engine.memory import memory_bonus, position_hash, get_position_memory
 
 PIECE_VALUES = {
     chess.PAWN: 100,
@@ -97,27 +97,25 @@ def minimax(
 
 def choose_move(board: chess.Board, depth: int = 2):
     legal_moves = list(board.legal_moves)
-
     if not legal_moves:
         return None, []
 
     legal_moves = order_moves(board, legal_moves)
-
     maximizing = board.turn == chess.WHITE
 
     best_score = -math.inf if maximizing else math.inf
     best_moves = []
-
     experiences = []
+
+    memory_map = get_position_memory(board)
 
     for move in legal_moves:
         board.push(move)
 
         pos_hash = position_hash(board)
-
         calc_score = minimax(board, depth - 1, -math.inf, math.inf, not maximizing)
 
-        learned = memory_bonus(board, move.uci())
+        learned = memory_map.get(move.uci(), 0.0)
 
         if maximizing:
             total_score = calc_score + (learned * 2)
@@ -125,7 +123,6 @@ def choose_move(board: chess.Board, depth: int = 2):
             total_score = calc_score - (learned * 2)
 
         experiences.append((pos_hash, move.uci()))
-
         board.pop()
 
         if maximizing:
@@ -141,9 +138,5 @@ def choose_move(board: chess.Board, depth: int = 2):
             elif total_score == best_score:
                 best_moves.append(move)
 
-    if random.random() < 0.1:
-        chosen_move = random.choice(legal_moves)
-    else:
-        chosen_move = random.choice(best_moves)
-
+    chosen_move = random.choice(best_moves) if random.random() >= 0.1 else random.choice(legal_moves)
     return chosen_move, experiences

@@ -106,6 +106,35 @@ def record_game(result, moves_pgn):
         conn.commit()
 
 
+def get_position_memory(board):
+    pos = position_hash(board)
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT move_uci, plays, wins, losses, draws, score
+                FROM move_memory
+                WHERE position_hash = %s
+                """,
+                (pos,),
+            )
+            rows = cur.fetchall()
+
+    memory = {}
+    for row in rows:
+        plays = row["plays"]
+        if plays == 0:
+            bonus = 0.0
+        else:
+            win_rate = (row["wins"] + 0.5 * row["draws"]) / plays
+            bonus = row["score"] + (win_rate * 40.0)
+
+        memory[row["move_uci"]] = bonus
+
+    return memory
+
+
 def learn_from_game(experiences, result, alpha=0.2):
     reward_map = {
         "win": 1.0,
