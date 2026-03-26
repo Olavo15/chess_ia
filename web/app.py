@@ -258,56 +258,64 @@ def legal_moves():
 
 @app.route("/move", methods=["POST"])
 def move():
-    game = get_game()
-    board = game["board"]
-    move_history = game["move_history"]
-    ai_experiences = game["ai_experiences"]
-
-    move_str = request.form.get("move", "").strip()
-
-    if not move_str:
-        return jsonify({"status": "illegal", "message": "Movimento vazio"}), 400
-
     try:
-        move = chess.Move.from_uci(move_str)
-    except ValueError:
-        return jsonify({"status": "illegal", "message": "UCI inválido"}), 400
+        game = get_game()
+        board = game["board"]
+        move_history = game["move_history"]
+        ai_experiences = game["ai_experiences"]
 
-    if move not in board.legal_moves:
-        return jsonify({"status": "illegal", "message": "Movimento ilegal"}), 400
+        move_str = request.form.get("move", "").strip()
 
-    player_san = board.san(move)
-    board.push(move)
-    player_move_data = move_to_dict(move, player_san)
-    move_history.append(player_move_data)
+        if not move_str:
+            return jsonify({"status": "illegal", "message": "Movimento vazio"}), 400
 
-    final_result = apply_learning_if_game_over(game)
+        try:
+            move = chess.Move.from_uci(move_str)
+        except ValueError:
+            return jsonify({"status": "illegal", "message": "UCI inválido"}), 400
 
-    ai_move_data = None
-    if not board.is_game_over():
-        ai_move, exp = choose_move(board, depth=2)
+        if move not in board.legal_moves:
+            return jsonify({"status": "illegal", "message": "Movimento ilegal"}), 400
 
-        if ai_move is not None:
-            ai_san = board.san(ai_move)
-            board.push(ai_move)
-            ai_move_data = move_to_dict(ai_move, ai_san)
-            move_history.append(ai_move_data)
-            ai_experiences.extend(exp)
+        player_san = board.san(move)
+        board.push(move)
+        player_move_data = move_to_dict(move, player_san)
+        move_history.append(player_move_data)
 
         final_result = apply_learning_if_game_over(game)
 
-    payload = {
-        "status": "ok",
-        "fen": board.fen(),
-        "history": move_history,
-        "last_move": move_history[-1] if move_history else None,
-        "player_move": player_move_data,
-        "ai_move": ai_move_data,
-        "saved_result": final_result,
-    }
-    payload.update(game_status_payload(board))
+        ai_move_data = None
+        if not board.is_game_over():
+            ai_move, exp = choose_move(board, depth=2)
 
-    return jsonify(payload)
+            if ai_move is not None:
+                ai_san = board.san(ai_move)
+                board.push(ai_move)
+                ai_move_data = move_to_dict(ai_move, ai_san)
+                move_history.append(ai_move_data)
+                ai_experiences.extend(exp)
+
+            final_result = apply_learning_if_game_over(game)
+
+        payload = {
+            "status": "ok",
+            "fen": board.fen(),
+            "history": move_history,
+            "last_move": move_history[-1] if move_history else None,
+            "player_move": player_move_data,
+            "ai_move": ai_move_data,
+            "saved_result": final_result,
+        }
+        payload.update(game_status_payload(board))
+
+        return jsonify(payload)
+
+    except Exception as e:
+        import traceback
+
+        print("ERRO NA ROTA /move:", e)
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 @app.route("/train_self_play", methods=["POST"])

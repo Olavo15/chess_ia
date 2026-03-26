@@ -11,8 +11,6 @@ def get_conn():
         raise RuntimeError("DATABASE_URL não configurada")
 
     parsed = urlparse(database_url)
-    print("DB USER:", parsed.username)
-    print("DB HOST:", parsed.hostname)
 
     return psycopg2.connect(
         database_url,
@@ -85,7 +83,11 @@ def get_move_stats(board, move_uci):
 
 
 def memory_bonus(board, move_uci):
-    stats = get_move_stats(board, move_uci)
+    try:
+        stats = get_move_stats(board, move_uci)
+    except Exception as e:
+        print("ERRO memory_bonus:", e)
+        return 0.0
 
     if stats["plays"] == 0:
         return 0.0
