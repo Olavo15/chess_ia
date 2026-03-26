@@ -2,34 +2,42 @@ import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import chess.polyglot
+from urllib.parse import urlparse
 
 
 def get_conn():
     database_url = os.environ.get("DATABASE_URL")
-
     if not database_url:
         raise RuntimeError("DATABASE_URL não configurada")
+
+    parsed = urlparse(database_url)
+    print("DB USER:", parsed.username)
+    print("DB HOST:", parsed.hostname)
 
     return psycopg2.connect(
         database_url,
         cursor_factory=RealDictCursor,
         sslmode="require",
+        connect_timeout=5,
     )
 
 
 def init_db():
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 CREATE TABLE IF NOT EXISTS games (
                     id SERIAL PRIMARY KEY,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     result TEXT NOT NULL,
                     moves_pgn TEXT NOT NULL
                 )
-            """)
+            """
+            )
 
-            cur.execute("""
+            cur.execute(
+                """
                 CREATE TABLE IF NOT EXISTS move_memory (
                     position_hash TEXT NOT NULL,
                     move_uci TEXT NOT NULL,
@@ -40,7 +48,8 @@ def init_db():
                     score DOUBLE PRECISION NOT NULL DEFAULT 0,
                     PRIMARY KEY (position_hash, move_uci)
                 )
-            """)
+            """
+            )
         conn.commit()
 
 
