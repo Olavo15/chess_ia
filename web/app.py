@@ -9,16 +9,13 @@ import chess
 import chess.pgn
 
 from engine.ai_player import choose_move
-from engine.memory import init_db, learn_from_game, record_game
+from engine.memory import init_db, learn_from_game, record_game, get_conn
 
 app = Flask(__name__)
 
-secret = os.environ.get("SECRET_KEY")
-
-if not secret:
-    raise RuntimeError("SECRET_KEY não definida")
-
-app.secret_key = secret
+# Em produção: use SECRET_KEY do .env/plataforma
+# Em dev local: gera uma padrão para não quebrar o app
+app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-me")
 
 # Estado temporário por sessão.
 # Bom para hobby/protótipo, mas não substitui banco persistente.
@@ -34,7 +31,7 @@ def cleanup_games(max_age_seconds=1800):
     now = time.time()
     expired = []
 
-    for game_id, game in games.items():
+    for game_id, game in list(games.items()):
         last_access = game.get("last_access", now)
         if now - last_access > max_age_seconds:
             expired.append(game_id)
@@ -90,6 +87,8 @@ def game_status_payload(board: chess.Board):
         status = "stalemate"
     elif board.is_insufficient_material():
         status = "draw"
+    elif board.is_seventyfive_moves() or board.is_fivefold_repetition():
+        status = "draw"
 
     return {
         "game_status": status,
@@ -102,7 +101,7 @@ def build_pgn_from_history(history, result="*", self_play=False):
     game = chess.pgn.Game()
 
     game.headers["Event"] = "Chess IA"
-    game.headers["Site"] = "Render"
+    game.headers["Site"] = "Local" if not os.environ.get("DATABASE_URL") else "Production"
     game.headers["Date"] = datetime.now().strftime("%Y.%m.%d")
     game.headers["Round"] = str((len(history) + 1) // 2)
 
@@ -179,14 +178,20 @@ def apply_learning_self_play(board, history, experiences_by_side):
     record_game(result, pgn_text)
 
     if result == "1-0":
-        learn_from_game(experiences_by_side["white"], "win")
-        learn_from_game(experiences_by_side["black"], "loss")
+        if experiences_by_side["white"]:
+            learn_from_game(experiences_by_side["white"], "win")
+        if experiences_by_side["black"]:
+            learn_from_game(experiences_by_side["black"], "loss")
     elif result == "0-1":
-        learn_from_game(experiences_by_side["white"], "loss")
-        learn_from_game(experiences_by_side["black"], "win")
+        if experiences_by_side["white"]:
+            learn_from_game(experiences_by_side["white"], "loss")
+        if experiences_by_side["black"]:
+            learn_from_game(experiences_by_side["black"], "win")
     else:
-        learn_from_game(experiences_by_side["white"], "draw")
-        learn_from_game(experiences_by_side["black"], "draw")
+        if experiences_by_side["white"]:
+            learn_from_game(experiences_by_side["white"], "draw")
+        if experiences_by_side["black"]:
+            learn_from_game(experiences_by_side["black"], "draw")
 
     return result
 
@@ -212,7 +217,8 @@ def run_self_play_game(depth=2, max_moves=150):
         training_board.push(ai_move)
 
         training_history.append(move_to_dict(ai_move, san))
-        training_ai_experiences[side].extend(exp)
+        if exp:
+            training_ai_experiences[side].extend(exp)
         move_count += 1
 
     result = apply_learning_self_play(
@@ -247,7 +253,13 @@ def index():
 
 @app.route("/health")
 def health():
-    return "ok", 200
+    return jsonify(
+        {
+            "status": "ok",
+            "environment": "production" if os.environ.get("DATABASE_URL") else "development",
+            "database": "postgres" if os.environ.get("DATABASE_URL") else "sqlite",
+        }
+    ), 200
 
 
 @app.route("/legal_moves")
@@ -318,7 +330,9 @@ def move():
                 board.push(ai_move)
                 ai_move_data = move_to_dict(ai_move, ai_san)
                 move_history.append(ai_move_data)
-                ai_experiences.extend(exp)
+
+                if exp:
+                    ai_experiences.extend(exp)
 
             final_result = apply_learning_if_game_over(game)
 
@@ -345,22 +359,25 @@ def move():
 
 @app.route("/train_self_play", methods=["POST"])
 def train_self_play():
-    data = request.get_json(silent=True) or {}
+    try:
+        data = request.get_json(silent=True) or {}
 
-    games_to_train = min(int(data.get("games", 10)), 50)
-    depth = int(data.get("depth", 2))
+        games_to_train = min(max(int(data.get("games", 10)), 1), 50)
+        depth = min(max(int(data.get("depth", 2)), 1), 5)
 
-    results = []
-    for _ in range(games_to_train):
-        results.append(run_self_play_game(depth=depth))
+        results = []
+        for _ in range(games_to_train):
+            results.append(run_self_play_game(depth=depth))
 
-    return jsonify(
-        {
-            "status": "ok",
-            "trained_games": len(results),
-            "results": results[-5:],
-        }
-    )
+        return jsonify(
+            {
+                "status": "ok",
+                "trained_games": len(results),
+                "results": results[-5:],
+            }
+        )
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 @app.route("/reset", methods=["POST"])
@@ -387,24 +404,35 @@ def reset():
 
 @app.route("/debug_memory")
 def debug_memory():
-    from engine.memory import get_conn
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
 
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) AS total FROM games")
-            games_count = cur.fetchone()["total"]
+        cur.execute("SELECT COUNT(*) AS total FROM games")
+        games_row = cur.fetchone()
 
-            cur.execute("SELECT COUNT(*) AS total FROM move_memory")
-            memory_count = cur.fetchone()["total"]
+        cur.execute("SELECT COUNT(*) AS total FROM move_memory")
+        memory_row = cur.fetchone()
 
-    return jsonify(
-        {
-            "saved_games": games_count,
-            "learned_positions": memory_count,
-        }
-    )
+        if isinstance(games_row, dict):
+            games_count = games_row["total"]
+            memory_count = memory_row["total"]
+        else:
+            games_count = games_row["total"] if "total" in games_row.keys() else games_row[0]
+            memory_count = memory_row["total"] if "total" in memory_row.keys() else memory_row[0]
+
+        return jsonify(
+            {
+                "saved_games": games_count,
+                "learned_positions": memory_count,
+                "database": "postgres" if os.environ.get("DATABASE_URL") else "sqlite",
+            }
+        )
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    debug_mode = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
+    app.run(host="0.0.0.0", port=port, debug=debug_mode)
