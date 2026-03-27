@@ -99,8 +99,8 @@ def choose_move(
     board: chess.Board,
     depth: int = 1,
     use_memory: bool = True,
-    memory_weight: float = 0.35,
-    exploration_rate: float = 0.05,
+    memory_weight: float = 0.60,
+    exploration_rate: float = 0.02,
 ):
     legal_moves = list(board.legal_moves)
     if not legal_moves:

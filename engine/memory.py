@@ -1,8 +1,9 @@
 import os
 import sqlite3
 import psycopg2
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import RealDictCursor, execute_values
 import chess.polyglot
+from collections import Counter
 
 
 def is_postgres():
@@ -178,86 +179,64 @@ def get_position_memory(board):
     return memory
 
 
-def learn_from_game(experiences, result, alpha=0.2):
+def learn_from_game(experiences, result, alpha=0.35):
     reward_map = {
-        "win": 1.0,
-        "loss": -1.0,
-        "draw": 0.1,
+        "win": 1.5,
+        "loss": -2.0,
+        "draw": 0.0,
     }
 
-    if result not in reward_map:
-        raise ValueError("result deve ser 'win', 'loss' ou 'draw'")
-
     reward = reward_map[result]
-    p = sql_placeholder()
+    total = len(experiences)
 
     with get_conn() as conn:
         cur = conn.cursor()
 
-        for pos_hash, move_uci in experiences:
+        for i, (pos_hash, move_uci) in enumerate(experiences):
+            weight = 1.0 + (i / max(total, 1))
+            adjusted_reward = reward * weight
+
             cur.execute(
-                f"""
+                """
                 SELECT plays, wins, losses, draws, score
                 FROM move_memory
-                WHERE position_hash = {p} AND move_uci = {p}
+                WHERE position_hash = %s AND move_uci = %s
                 """,
                 (pos_hash, move_uci),
             )
-            row = dict_row(cur.fetchone())
+            row = cur.fetchone()
 
-            if row is None:
-                plays = wins = losses = draws = 0
-                score = 0.0
-            else:
-                plays = row["plays"]
-                wins = row["wins"]
-                losses = row["losses"]
-                draws = row["draws"]
-                score = row["score"]
+            if row:
+                plays = row["plays"] + 1
+                wins = row["wins"] + (1 if result == "win" else 0)
+                losses = row["losses"] + (1 if result == "loss" else 0)
+                draws = row["draws"] + (1 if result == "draw" else 0)
+                score = row["score"] + alpha * (adjusted_reward - row["score"])
 
-            plays += 1
-            if result == "win":
-                wins += 1
-            elif result == "loss":
-                losses += 1
-            else:
-                draws += 1
-
-            score = score + alpha * (reward - score)
-
-            if is_postgres():
                 cur.execute(
                     """
-                    INSERT INTO move_memory (
-                        position_hash, move_uci, plays, wins, losses, draws, score
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (position_hash, move_uci)
-                    DO UPDATE SET
-                        plays = EXCLUDED.plays,
-                        wins = EXCLUDED.wins,
-                        losses = EXCLUDED.losses,
-                        draws = EXCLUDED.draws,
-                        score = EXCLUDED.score
+                    UPDATE move_memory
+                    SET plays = %s, wins = %s, losses = %s, draws = %s, score = %s
+                    WHERE position_hash = %s AND move_uci = %s
                     """,
-                    (pos_hash, move_uci, plays, wins, losses, draws, score),
+                    (plays, wins, losses, draws, score, pos_hash, move_uci),
                 )
             else:
                 cur.execute(
                     """
-                    INSERT INTO move_memory (
-                        position_hash, move_uci, plays, wins, losses, draws, score
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(position_hash, move_uci)
-                    DO UPDATE SET
-                        plays = excluded.plays,
-                        wins = excluded.wins,
-                        losses = excluded.losses,
-                        draws = excluded.draws,
-                        score = excluded.score
+                    INSERT INTO move_memory
+                    (position_hash, move_uci, plays, wins, losses, draws, score)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """,
-                    (pos_hash, move_uci, plays, wins, losses, draws, score),
+                    (
+                        pos_hash,
+                        move_uci,
+                        1,
+                        1 if result == "win" else 0,
+                        1 if result == "loss" else 0,
+                        1 if result == "draw" else 0,
+                        adjusted_reward,
+                    ),
                 )
 
         conn.commit()

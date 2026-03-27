@@ -404,7 +404,7 @@ def move():
 
         ai_move_data = None
         if not board.is_game_over():
-            ai_move, exp = choose_move(board, depth=1, use_memory=False)
+            ai_move, exp = choose_move(board, depth=1, use_memory=True)
 
             if ai_move is not None:
                 ai_san = board.san(ai_move)
