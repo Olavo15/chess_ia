@@ -32,9 +32,6 @@ games = {}
 init_db()
 
 
-# =========================
-# GAME STORAGE PER SESSION
-# =========================
 def cleanup_games(max_age_seconds=1800):
     now = time.time()
     expired = []
@@ -69,9 +66,6 @@ def get_game():
     return games[game_id]
 
 
-# =========================
-# HELPERS
-# =========================
 def move_to_dict(move: chess.Move, san: str):
     return {
         "uci": move.uci(),
@@ -148,9 +142,6 @@ def build_success_message(job_type, result, learned_count, saved_game=True):
     )
 
 
-# =========================
-# LEARNING JOBS
-# =========================
 def apply_learning_if_game_over(game):
     board = game["board"]
     move_history = game["move_history"]
@@ -325,7 +316,7 @@ def process_one_learning_job():
         }
 
 
-def run_self_play_game(depth=2, max_moves=150):
+def run_self_play_game(depth=1, max_moves=150):
     training_board = chess.Board()
     training_history = []
     training_ai_experiences = {
@@ -338,7 +329,9 @@ def run_self_play_game(depth=2, max_moves=150):
     while not training_board.is_game_over() and move_count < max_moves:
         side = "white" if training_board.turn == chess.WHITE else "black"
 
-        ai_move, exp = choose_move(training_board, depth=depth, use_memory=True)
+        # IMPORTANTE:
+        # no self-play, não consultar o banco a cada jogada
+        ai_move, exp = choose_move(training_board, depth=depth, use_memory=False)
         if ai_move is None:
             break
 
@@ -367,9 +360,6 @@ def run_self_play_game(depth=2, max_moves=150):
     }
 
 
-# =========================
-# ROUTES
-# =========================
 @app.route("/")
 def index():
     game = get_game()
@@ -497,7 +487,7 @@ def train_self_play():
         data = request.get_json(silent=True) or {}
 
         games_to_train = min(max(int(data.get("games", 10)), 1), 50)
-        depth = min(max(int(data.get("depth", 2)), 1), 5)
+        depth = min(max(int(data.get("depth", 1)), 1), 3)
 
         results = []
         for _ in range(games_to_train):
@@ -517,11 +507,46 @@ def train_self_play():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+@app.route("/auto_train", methods=["POST"])
+def auto_train():
+    try:
+        data = request.get_json(silent=True) or {}
+
+        games_to_train = min(max(int(data.get("games", 10)), 1), 100)
+        depth = min(max(int(data.get("depth", 1)), 1), 3)
+        process_limit = min(max(int(data.get("process_limit", games_to_train)), 1), 200)
+
+        training_results = []
+        for _ in range(games_to_train):
+            training_results.append(run_self_play_game(depth=depth))
+
+        processed_results = []
+        for _ in range(process_limit):
+            outcome = process_one_learning_job()
+            processed_results.append(outcome)
+            if not outcome["processed"]:
+                break
+
+        return jsonify(
+            {
+                "status": "ok",
+                "trained_games": len(training_results),
+                "last_training_results": training_results[-5:],
+                "processed_jobs": processed_results,
+                "jobs": get_job_counts(),
+            }
+        )
+    except Exception as e:
+        print("ERRO NA ROTA /auto_train:", e)
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 @app.route("/process_learning_jobs", methods=["POST"])
 def process_learning_jobs():
     try:
         data = request.get_json(silent=True) or {}
-        limit = min(max(int(data.get("limit", 1)), 1), 20)
+        limit = min(max(int(data.get("limit", 1)), 1), 50)
 
         results = []
         for _ in range(limit):
