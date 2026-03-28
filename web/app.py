@@ -243,10 +243,9 @@ def process_one_learning_job():
         }
 
 
-def train_self_play_batch(games_to_train=10, depth=1, max_moves=150):
-    aggregated_white = []
-    aggregated_black = []
+def train_self_play_batch(games_to_train=5, depth=1, max_moves=120):
     results = []
+    learned_count = 0
 
     for _ in range(games_to_train):
         training_board = chess.Board()
@@ -287,57 +286,40 @@ def train_self_play_batch(games_to_train=10, depth=1, max_moves=150):
         record_game(result, pgn_text)
 
         if result == "1-0":
-            aggregated_white.extend(training_ai_experiences["white"])
-            aggregated_black.extend(training_ai_experiences["black"])
-            white_outcome = "win"
-            black_outcome = "loss"
+            if training_ai_experiences["white"]:
+                learned_count += learn_from_game(
+                    training_ai_experiences["white"], "win", chunk_size=150
+                )
+            if training_ai_experiences["black"]:
+                learned_count += learn_from_game(
+                    training_ai_experiences["black"], "loss", chunk_size=150
+                )
         elif result == "0-1":
-            aggregated_white.extend(training_ai_experiences["white"])
-            aggregated_black.extend(training_ai_experiences["black"])
-            white_outcome = "loss"
-            black_outcome = "win"
+            if training_ai_experiences["white"]:
+                learned_count += learn_from_game(
+                    training_ai_experiences["white"], "loss", chunk_size=150
+                )
+            if training_ai_experiences["black"]:
+                learned_count += learn_from_game(
+                    training_ai_experiences["black"], "win", chunk_size=150
+                )
         else:
-            aggregated_white.extend(training_ai_experiences["white"])
-            aggregated_black.extend(training_ai_experiences["black"])
-            white_outcome = "draw"
-            black_outcome = "draw"
+            if training_ai_experiences["white"]:
+                learned_count += learn_from_game(
+                    training_ai_experiences["white"], "draw", chunk_size=150
+                )
+            if training_ai_experiences["black"]:
+                learned_count += learn_from_game(
+                    training_ai_experiences["black"], "draw", chunk_size=150
+                )
 
         results.append(
             {
                 "result": result,
                 "moves": len(training_history),
                 "final_fen": training_board.fen(),
-                "white_outcome": white_outcome,
-                "black_outcome": black_outcome,
             }
         )
-
-    learned_count = 0
-
-    white_norm = normalize_experiences(aggregated_white)
-    black_norm = normalize_experiences(aggregated_black)
-
-    if white_norm:
-        white_results = [r["white_outcome"] for r in results]
-        if white_results.count("win") >= max(
-            white_results.count("loss"), white_results.count("draw")
-        ):
-            learned_count += learn_from_game(white_norm, "win")
-        elif white_results.count("loss") >= white_results.count("draw"):
-            learned_count += learn_from_game(white_norm, "loss")
-        else:
-            learned_count += learn_from_game(white_norm, "draw")
-
-    if black_norm:
-        black_results = [r["black_outcome"] for r in results]
-        if black_results.count("win") >= max(
-            black_results.count("loss"), black_results.count("draw")
-        ):
-            learned_count += learn_from_game(black_norm, "win")
-        elif black_results.count("loss") >= black_results.count("draw"):
-            learned_count += learn_from_game(black_norm, "loss")
-        else:
-            learned_count += learn_from_game(black_norm, "draw")
 
     print(
         f"[LEARNING][SUCCESS] type=self_play_batch saved_game=True "
@@ -479,7 +461,7 @@ def train_self_play():
     try:
         data = request.get_json(silent=True) or {}
 
-        games_to_train = min(max(int(data.get("games", 10)), 1), 30)
+        games_to_train = min(max(int(data.get("games", 5)), 1), 10)
         depth = min(max(int(data.get("depth", 1)), 1), 2)
 
         results, learned_count = train_self_play_batch(
@@ -507,9 +489,9 @@ def auto_train():
     try:
         data = request.get_json(silent=True) or {}
 
-        games_to_train = min(max(int(data.get("games", 10)), 1), 30)
+        games_to_train = min(max(int(data.get("games", 5)), 1), 10)
         depth = min(max(int(data.get("depth", 1)), 1), 2)
-        process_limit = min(max(int(data.get("process_limit", 10)), 1), 50)
+        process_limit = min(max(int(data.get("process_limit", 5)), 1), 20)
 
         results, learned_count = train_self_play_batch(
             games_to_train=games_to_train,
@@ -543,7 +525,7 @@ def auto_train():
 def process_learning_jobs():
     try:
         data = request.get_json(silent=True) or {}
-        limit = min(max(int(data.get("limit", 1)), 1), 50)
+        limit = min(max(int(data.get("limit", 1)), 1), 20)
 
         results = []
         for _ in range(limit):

@@ -123,46 +123,14 @@ def position_hash(board):
     return str(chess.polyglot.zobrist_hash(board))
 
 
-def get_move_stats(board, move_uci):
-    pos = position_hash(board)
-    p = sql_placeholder()
+def normalize_experiences(experiences):
+    normalized = []
 
-    with get_conn() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            f"""
-            SELECT plays, wins, losses, draws, score
-            FROM move_memory
-            WHERE position_hash = {p} AND move_uci = {p}
-            """,
-            (pos, move_uci),
-        )
-        row = dict_row(cur.fetchone())
+    for item in experiences or []:
+        if isinstance(item, (list, tuple)) and len(item) == 2:
+            normalized.append((str(item[0]), str(item[1])))
 
-    if row is None:
-        return {
-            "plays": 0,
-            "wins": 0,
-            "losses": 0,
-            "draws": 0,
-            "score": 0.0,
-        }
-
-    return row
-
-
-def memory_bonus(board, move_uci):
-    try:
-        stats = get_move_stats(board, move_uci)
-    except Exception as e:
-        print("ERRO memory_bonus:", e)
-        return 0.0
-
-    if stats["plays"] == 0:
-        return 0.0
-
-    win_rate = (stats["wins"] + 0.5 * stats["draws"]) / stats["plays"]
-    return stats["score"] + (win_rate * 40.0)
+    return normalized
 
 
 def record_game(result, moves_pgn):
@@ -332,21 +300,11 @@ def get_position_memory(board):
     return memory
 
 
-def normalize_experiences(experiences):
-    normalized = []
-
-    for item in experiences or []:
-        if isinstance(item, (list, tuple)) and len(item) == 2:
-            normalized.append((str(item[0]), str(item[1])))
-
-    return normalized
-
-
-def learn_from_game(experiences, result, alpha=0.35):
+def learn_from_game(experiences, result, alpha=0.65, chunk_size=200):
     reward_map = {
-        "win": 1.5,
-        "loss": -2.0,
-        "draw": 0.0,
+        "win": 8.0,
+        "loss": -10.0,
+        "draw": 1.5,
     }
 
     if result not in reward_map:
@@ -358,145 +316,166 @@ def learn_from_game(experiences, result, alpha=0.35):
 
     reward = reward_map[result]
     grouped = Counter(normalized_experiences)
-    keys = list(grouped.keys())
+    all_items = list(grouped.items())
+
+    total_unique = len(all_items)
+    total_processed = 0
 
     with get_conn() as conn:
         cur = conn.cursor()
 
-        if is_postgres():
-            existing = {}
+        for start in range(0, total_unique, chunk_size):
+            chunk_items = all_items[start : start + chunk_size]
+            chunk_keys = [item[0] for item in chunk_items]
 
-            if keys:
-                placeholders = ",".join(["(%s, %s)"] * len(keys))
-                params = []
-                for pos_hash, move_uci in keys:
-                    params.extend([pos_hash, move_uci])
+            if is_postgres():
+                existing = {}
 
-                cur.execute(
-                    f"""
-                    SELECT position_hash, move_uci, plays, wins, losses, draws, score
-                    FROM move_memory
-                    WHERE (position_hash, move_uci) IN ({placeholders})
-                    """,
-                    params,
-                )
+                if chunk_keys:
+                    placeholders = ",".join(["(%s, %s)"] * len(chunk_keys))
+                    params = []
+                    for pos_hash, move_uci in chunk_keys:
+                        params.extend([pos_hash, move_uci])
 
-                for row in cur.fetchall():
-                    row = dict(row)
-                    existing[(row["position_hash"], row["move_uci"])] = row
-
-            rows_to_upsert = []
-            total = len(keys)
-
-            for idx, ((pos_hash, move_uci), repeat_count) in enumerate(
-                grouped.items(), start=1
-            ):
-                row = existing.get((pos_hash, move_uci))
-
-                if row is None:
-                    plays = wins = losses = draws = 0
-                    score = 0.0
-                else:
-                    plays = row["plays"]
-                    wins = row["wins"]
-                    losses = row["losses"]
-                    draws = row["draws"]
-                    score = row["score"]
-
-                plays += repeat_count
-                if result == "win":
-                    wins += repeat_count
-                elif result == "loss":
-                    losses += repeat_count
-                else:
-                    draws += repeat_count
-
-                weight = 1.0 + (idx / max(total, 1))
-                adjusted_reward = reward * weight
-
-                for _ in range(repeat_count):
-                    score = score + alpha * (adjusted_reward - score)
-
-                rows_to_upsert.append(
-                    (pos_hash, move_uci, plays, wins, losses, draws, score)
-                )
-
-            if rows_to_upsert:
-                execute_values(
-                    cur,
-                    """
-                    INSERT INTO move_memory (
-                        position_hash, move_uci, plays, wins, losses, draws, score
+                    cur.execute(
+                        f"""
+                        SELECT position_hash, move_uci, plays, wins, losses, draws, score
+                        FROM move_memory
+                        WHERE (position_hash, move_uci) IN ({placeholders})
+                        """,
+                        params,
                     )
-                    VALUES %s
-                    ON CONFLICT (position_hash, move_uci)
-                    DO UPDATE SET
-                        plays = EXCLUDED.plays,
-                        wins = EXCLUDED.wins,
-                        losses = EXCLUDED.losses,
-                        draws = EXCLUDED.draws,
-                        score = EXCLUDED.score
-                    """,
-                    rows_to_upsert,
-                )
-        else:
-            total = len(keys)
 
-            for idx, ((pos_hash, move_uci), repeat_count) in enumerate(
-                grouped.items(), start=1
-            ):
-                cur.execute(
-                    """
-                    SELECT plays, wins, losses, draws, score
-                    FROM move_memory
-                    WHERE position_hash = ? AND move_uci = ?
-                    """,
-                    (pos_hash, move_uci),
-                )
-                row = cur.fetchone()
+                    for row in cur.fetchall():
+                        row = dict(row)
+                        existing[(row["position_hash"], row["move_uci"])] = row
 
-                if row is None:
-                    plays = wins = losses = draws = 0
-                    score = 0.0
-                else:
-                    row = dict(row)
-                    plays = row["plays"]
-                    wins = row["wins"]
-                    losses = row["losses"]
-                    draws = row["draws"]
-                    score = row["score"]
+                rows_to_upsert = []
 
-                plays += repeat_count
-                if result == "win":
-                    wins += repeat_count
-                elif result == "loss":
-                    losses += repeat_count
-                else:
-                    draws += repeat_count
+                for offset, ((pos_hash, move_uci), repeat_count) in enumerate(
+                    chunk_items, start=1
+                ):
+                    global_idx = start + offset
 
-                weight = 1.0 + (idx / max(total, 1))
-                adjusted_reward = reward * weight
+                    row = existing.get((pos_hash, move_uci))
 
-                for _ in range(repeat_count):
-                    score = score + alpha * (adjusted_reward - score)
+                    if row is None:
+                        plays = wins = losses = draws = 0
+                        score = 0.0
+                    else:
+                        plays = row["plays"]
+                        wins = row["wins"]
+                        losses = row["losses"]
+                        draws = row["draws"]
+                        score = row["score"]
 
-                cur.execute(
-                    """
-                    INSERT INTO move_memory (
-                        position_hash, move_uci, plays, wins, losses, draws, score
+                    plays += repeat_count
+                    if result == "win":
+                        wins += repeat_count
+                    elif result == "loss":
+                        losses += repeat_count
+                    else:
+                        draws += repeat_count
+
+                    weight = 1.0 + ((global_idx / max(total_unique, 1)) * 3.5)
+                    adjusted_reward = reward * weight
+
+                    if result == "loss":
+                        adjusted_reward -= 4.0
+                    if result == "win":
+                        adjusted_reward += 2.0
+
+                    for _ in range(repeat_count):
+                        score = score + alpha * (adjusted_reward - score)
+
+                    rows_to_upsert.append(
+                        (pos_hash, move_uci, plays, wins, losses, draws, score)
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(position_hash, move_uci)
-                    DO UPDATE SET
-                        plays = excluded.plays,
-                        wins = excluded.wins,
-                        losses = excluded.losses,
-                        draws = excluded.draws,
-                        score = excluded.score
-                    """,
-                    (pos_hash, move_uci, plays, wins, losses, draws, score),
-                )
+
+                if rows_to_upsert:
+                    execute_values(
+                        cur,
+                        """
+                        INSERT INTO move_memory (
+                            position_hash, move_uci, plays, wins, losses, draws, score
+                        )
+                        VALUES %s
+                        ON CONFLICT (position_hash, move_uci)
+                        DO UPDATE SET
+                            plays = EXCLUDED.plays,
+                            wins = EXCLUDED.wins,
+                            losses = EXCLUDED.losses,
+                            draws = EXCLUDED.draws,
+                            score = EXCLUDED.score
+                        """,
+                        rows_to_upsert,
+                    )
+
+            else:
+                for offset, ((pos_hash, move_uci), repeat_count) in enumerate(
+                    chunk_items, start=1
+                ):
+                    global_idx = start + offset
+
+                    cur.execute(
+                        """
+                        SELECT plays, wins, losses, draws, score
+                        FROM move_memory
+                        WHERE position_hash = ? AND move_uci = ?
+                        """,
+                        (pos_hash, move_uci),
+                    )
+                    row = cur.fetchone()
+
+                    if row is None:
+                        plays = wins = losses = draws = 0
+                        score = 0.0
+                    else:
+                        row = dict(row)
+                        plays = row["plays"]
+                        wins = row["wins"]
+                        losses = row["losses"]
+                        draws = row["draws"]
+                        score = row["score"]
+
+                    plays += repeat_count
+                    if result == "win":
+                        wins += repeat_count
+                    elif result == "loss":
+                        losses += repeat_count
+                    else:
+                        draws += repeat_count
+
+                    weight = 1.0 + ((global_idx / max(total_unique, 1)) * 3.5)
+                    adjusted_reward = reward * weight
+
+                    if result == "loss":
+                        adjusted_reward -= 4.0
+                    if result == "win":
+                        adjusted_reward += 2.0
+
+                    for _ in range(repeat_count):
+                        score = score + alpha * (adjusted_reward - score)
+
+                    cur.execute(
+                        """
+                        INSERT INTO move_memory (
+                            position_hash, move_uci, plays, wins, losses, draws, score
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(position_hash, move_uci)
+                        DO UPDATE SET
+                            plays = excluded.plays,
+                            wins = excluded.wins,
+                            losses = excluded.losses,
+                            draws = excluded.draws,
+                            score = excluded.score
+                        """,
+                        (pos_hash, move_uci, plays, wins, losses, draws, score),
+                    )
+
+            total_processed += len(chunk_items)
 
         conn.commit()
 
-    return len(grouped)
+    return total_processed
