@@ -1,11 +1,11 @@
-import os
 import json
+import os
 import sqlite3
 from collections import Counter
 
+import chess.polyglot
 import psycopg2
 from psycopg2.extras import RealDictCursor, execute_values
-import chess.polyglot
 
 
 def is_postgres():
@@ -51,7 +51,7 @@ def init_db():
                     result TEXT NOT NULL,
                     moves_pgn TEXT NOT NULL
                 )
-            """)
+                """)
 
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS move_memory (
@@ -64,7 +64,7 @@ def init_db():
                     score DOUBLE PRECISION NOT NULL DEFAULT 0,
                     PRIMARY KEY (position_hash, move_uci)
                 )
-            """)
+                """)
 
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS learning_jobs (
@@ -78,7 +78,7 @@ def init_db():
                     error_message TEXT NULL,
                     success_message TEXT NULL
                 )
-            """)
+                """)
         else:
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS games (
@@ -87,7 +87,7 @@ def init_db():
                     result TEXT NOT NULL,
                     moves_pgn TEXT NOT NULL
                 )
-            """)
+                """)
 
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS move_memory (
@@ -100,7 +100,7 @@ def init_db():
                     score REAL NOT NULL DEFAULT 0,
                     PRIMARY KEY (position_hash, move_uci)
                 )
-            """)
+                """)
 
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS learning_jobs (
@@ -114,13 +114,55 @@ def init_db():
                     error_message TEXT NULL,
                     success_message TEXT NULL
                 )
-            """)
+                """)
 
         conn.commit()
 
 
 def position_hash(board):
     return str(chess.polyglot.zobrist_hash(board))
+
+
+def get_move_stats(board, move_uci):
+    pos = position_hash(board)
+    p = sql_placeholder()
+
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"""
+            SELECT plays, wins, losses, draws, score
+            FROM move_memory
+            WHERE position_hash = {p} AND move_uci = {p}
+            """,
+            (pos, move_uci),
+        )
+        row = dict_row(cur.fetchone())
+
+    if row is None:
+        return {
+            "plays": 0,
+            "wins": 0,
+            "losses": 0,
+            "draws": 0,
+            "score": 0.0,
+        }
+
+    return row
+
+
+def memory_bonus(board, move_uci):
+    try:
+        stats = get_move_stats(board, move_uci)
+    except Exception as e:
+        print("ERRO memory_bonus:", e)
+        return 0.0
+
+    if stats["plays"] == 0:
+        return 0.0
+
+    win_rate = (stats["wins"] + 0.5 * stats["draws"]) / stats["plays"]
+    return stats["score"] + (win_rate * 40.0)
 
 
 def record_game(result, moves_pgn):
@@ -137,12 +179,10 @@ def record_game(result, moves_pgn):
 
 def enqueue_learning_job(job_type, payload):
     p = sql_placeholder()
-
     payload_str = json.dumps(payload)
 
     with get_conn() as conn:
         cur = conn.cursor()
-
         cur.execute(
             f"""
             INSERT INTO learning_jobs (job_type, payload, status)
@@ -150,42 +190,31 @@ def enqueue_learning_job(job_type, payload):
             """,
             (job_type, payload_str, "pending"),
         )
-
         conn.commit()
 
 
 def get_next_pending_job():
     with get_conn() as conn:
         cur = conn.cursor()
-
-        if is_postgres():
-            cur.execute("""
-                SELECT id, job_type, status, payload
-                FROM learning_jobs
-                WHERE status = 'pending'
-                ORDER BY id ASC
-                LIMIT 1
+        cur.execute("""
+            SELECT id, job_type, status, payload
+            FROM learning_jobs
+            WHERE status = 'pending'
+            ORDER BY id ASC
+            LIMIT 1
             """)
-        else:
-            cur.execute("""
-                SELECT id, job_type, status, payload
-                FROM learning_jobs
-                WHERE status = 'pending'
-                ORDER BY id ASC
-                LIMIT 1
-            """)
-
         row = cur.fetchone()
-        if row is None:
-            return None
 
-        row = dict(row)
-        payload = row["payload"]
+    if row is None:
+        return None
 
-        if isinstance(payload, str):
-            row["payload"] = json.loads(payload)
+    row = dict(row)
+    payload = row["payload"]
 
-        return row
+    if isinstance(payload, str):
+        row["payload"] = json.loads(payload)
+
+    return row
 
 
 def mark_job_processing(job_id):
@@ -193,26 +222,14 @@ def mark_job_processing(job_id):
 
     with get_conn() as conn:
         cur = conn.cursor()
-
-        if is_postgres():
-            cur.execute(
-                f"""
-                UPDATE learning_jobs
-                SET status = {p}, started_at = CURRENT_TIMESTAMP
-                WHERE id = {p}
-                """,
-                ("processing", job_id),
-            )
-        else:
-            cur.execute(
-                f"""
-                UPDATE learning_jobs
-                SET status = {p}, started_at = CURRENT_TIMESTAMP
-                WHERE id = {p}
-                """,
-                ("processing", job_id),
-            )
-
+        cur.execute(
+            f"""
+            UPDATE learning_jobs
+            SET status = {p}, started_at = CURRENT_TIMESTAMP
+            WHERE id = {p}
+            """,
+            ("processing", job_id),
+        )
         conn.commit()
 
 
@@ -260,27 +277,27 @@ def get_job_counts():
         cur.execute(
             "SELECT COUNT(*) AS total FROM learning_jobs WHERE status = 'pending'"
         )
-        pending = cur.fetchone()
+        pending = dict(cur.fetchone())["total"]
 
         cur.execute(
             "SELECT COUNT(*) AS total FROM learning_jobs WHERE status = 'processing'"
         )
-        processing = cur.fetchone()
+        processing = dict(cur.fetchone())["total"]
 
         cur.execute("SELECT COUNT(*) AS total FROM learning_jobs WHERE status = 'done'")
-        done = cur.fetchone()
+        done = dict(cur.fetchone())["total"]
 
         cur.execute(
             "SELECT COUNT(*) AS total FROM learning_jobs WHERE status = 'failed'"
         )
-        failed = cur.fetchone()
+        failed = dict(cur.fetchone())["total"]
 
-        return {
-            "pending": dict(pending)["total"],
-            "processing": dict(processing)["total"],
-            "done": dict(done)["total"],
-            "failed": dict(failed)["total"],
-        }
+    return {
+        "pending": pending,
+        "processing": processing,
+        "done": done,
+        "failed": failed,
+    }
 
 
 def get_position_memory(board):
@@ -315,6 +332,16 @@ def get_position_memory(board):
     return memory
 
 
+def normalize_experiences(experiences):
+    normalized = []
+
+    for item in experiences or []:
+        if isinstance(item, (list, tuple)) and len(item) == 2:
+            normalized.append((str(item[0]), str(item[1])))
+
+    return normalized
+
+
 def learn_from_game(experiences, result, alpha=0.35):
     reward_map = {
         "win": 1.5,
@@ -325,11 +352,12 @@ def learn_from_game(experiences, result, alpha=0.35):
     if result not in reward_map:
         raise ValueError("result deve ser 'win', 'loss' ou 'draw'")
 
-    if not experiences:
+    normalized_experiences = normalize_experiences(experiences)
+    if not normalized_experiences:
         return 0
 
     reward = reward_map[result]
-    grouped = Counter(experiences)
+    grouped = Counter(normalized_experiences)
     keys = list(grouped.keys())
 
     with get_conn() as conn:
@@ -358,8 +386,8 @@ def learn_from_game(experiences, result, alpha=0.35):
                     existing[(row["position_hash"], row["move_uci"])] = row
 
             rows_to_upsert = []
-
             total = len(keys)
+
             for idx, ((pos_hash, move_uci), repeat_count) in enumerate(
                 grouped.items(), start=1
             ):
@@ -413,6 +441,7 @@ def learn_from_game(experiences, result, alpha=0.35):
                 )
         else:
             total = len(keys)
+
             for idx, ((pos_hash, move_uci), repeat_count) in enumerate(
                 grouped.items(), start=1
             ):
