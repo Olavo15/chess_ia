@@ -20,7 +20,12 @@ def evaluate_position(board: chess.Board) -> int:
     if board.is_checkmate():
         return -CHECKMATE_SCORE if board.turn == chess.WHITE else CHECKMATE_SCORE
 
-    if board.is_stalemate() or board.is_insufficient_material():
+    if (
+        board.is_stalemate()
+        or board.is_insufficient_material()
+        or board.is_seventyfive_moves()
+        or board.is_fivefold_repetition()
+    ):
         return 0
 
     score = 0
@@ -47,10 +52,10 @@ def order_moves(board: chess.Board, moves):
                 score += 200
 
         if board.gives_check(move):
-            score += 500
+            score += 700
 
         if move.promotion:
-            score += 800
+            score += 1200
 
         return score
 
@@ -97,10 +102,10 @@ def minimax(
 
 def choose_move(
     board: chess.Board,
-    depth: int = 1,
+    depth: int = 2,
     use_memory: bool = True,
-    memory_weight: float = 0.60,
-    exploration_rate: float = 0.02,
+    memory_weight: float = 12.0,
+    exploration_rate: float = 0.03,
 ):
     legal_moves = list(board.legal_moves)
     if not legal_moves:
@@ -125,16 +130,23 @@ def choose_move(
         pos_hash = position_hash(board)
         calc_score = minimax(board, depth - 1, -math.inf, math.inf, not maximizing)
 
-        learned = memory_map.get(move.uci(), 0.0)
-        adjusted_score = calc_score + (learned * memory_weight)
+        raw_learned = memory_map.get(move.uci(), 0.0)
+        learned = raw_learned * 100.0
 
         tactical_bonus = 0
+
         if board.is_check():
-            tactical_bonus += 40
+            tactical_bonus += 120
+
+        if board.is_checkmate():
+            tactical_bonus += 50000
+
+        if move.promotion:
+            tactical_bonus += 1500
 
         board.pop()
 
-        total_score = adjusted_score + tactical_bonus
+        total_score = calc_score + (learned * memory_weight) + tactical_bonus
 
         experiences.append((pos_hash, move.uci()))
 

@@ -178,36 +178,6 @@ def apply_learning_if_game_over(game):
     return result
 
 
-def apply_learning_self_play(board, history, experiences_by_side):
-    if not board.is_game_over():
-        return None
-
-    result = board.result()
-    pgn_text = build_pgn_from_history(history, result=result, self_play=True)
-
-    enqueue_learning_job(
-        "self_play",
-        {
-            "result": result,
-            "pgn_text": pgn_text,
-            "experiences_by_side": {
-                "white": list(experiences_by_side["white"]),
-                "black": list(experiences_by_side["black"]),
-            },
-        },
-    )
-
-    print(
-        f"[LEARNING][ENQUEUED] "
-        f"type=self_play "
-        f"result={result} "
-        f"white_exp={len(experiences_by_side['white'])} "
-        f"black_exp={len(experiences_by_side['black'])}"
-    )
-
-    return result
-
-
 def process_one_learning_job():
     job = get_next_pending_job()
     if not job:
@@ -255,49 +225,6 @@ def process_one_learning_job():
                 "message": success_message,
             }
 
-        if job_type == "self_play":
-            result = payload["result"]
-            pgn_text = payload["pgn_text"]
-            experiences_by_side = payload.get("experiences_by_side", {})
-
-            white_exp = normalize_experiences(experiences_by_side.get("white", []))
-            black_exp = normalize_experiences(experiences_by_side.get("black", []))
-
-            record_game(result, pgn_text)
-
-            learned_count = 0
-            if result == "1-0":
-                if white_exp:
-                    learned_count += learn_from_game(white_exp, "win")
-                if black_exp:
-                    learned_count += learn_from_game(black_exp, "loss")
-            elif result == "0-1":
-                if white_exp:
-                    learned_count += learn_from_game(white_exp, "loss")
-                if black_exp:
-                    learned_count += learn_from_game(black_exp, "win")
-            else:
-                if white_exp:
-                    learned_count += learn_from_game(white_exp, "draw")
-                if black_exp:
-                    learned_count += learn_from_game(black_exp, "draw")
-
-            success_message = build_success_message(
-                job_type="self_play",
-                result=result,
-                learned_count=learned_count,
-                saved_game=True,
-            )
-            print(success_message)
-            mark_job_done(job_id, success_message)
-
-            return {
-                "processed": True,
-                "job_id": job_id,
-                "status": "done",
-                "message": success_message,
-            }
-
         raise ValueError(f"job_type inválido: {job_type}")
 
     except Exception as e:
@@ -316,48 +243,108 @@ def process_one_learning_job():
         }
 
 
-def run_self_play_game(depth=1, max_moves=150):
-    training_board = chess.Board()
-    training_history = []
-    training_ai_experiences = {
-        "white": [],
-        "black": [],
-    }
+def train_self_play_batch(games_to_train=10, depth=1, max_moves=150):
+    aggregated_white = []
+    aggregated_black = []
+    results = []
 
-    move_count = 0
+    for _ in range(games_to_train):
+        training_board = chess.Board()
+        training_history = []
+        training_ai_experiences = {
+            "white": [],
+            "black": [],
+        }
 
-    while not training_board.is_game_over() and move_count < max_moves:
-        side = "white" if training_board.turn == chess.WHITE else "black"
+        move_count = 0
 
-        # IMPORTANTE:
-        # no self-play, não consultar o banco a cada jogada
-        ai_move, exp = choose_move(training_board, depth=depth, use_memory=False)
-        if ai_move is None:
-            break
+        while not training_board.is_game_over() and move_count < max_moves:
+            side = "white" if training_board.turn == chess.WHITE else "black"
 
-        san = training_board.san(ai_move)
-        training_board.push(ai_move)
+            ai_move, exp = choose_move(
+                training_board,
+                depth=depth,
+                use_memory=False,
+                exploration_rate=0.15,
+            )
+            if ai_move is None:
+                break
 
-        training_history.append(move_to_dict(ai_move, san))
-        if exp:
-            training_ai_experiences[side].extend(exp)
+            san = training_board.san(ai_move)
+            training_board.push(ai_move)
 
-        move_count += 1
+            training_history.append(move_to_dict(ai_move, san))
+            if exp:
+                training_ai_experiences[side].extend(exp)
 
-    result = apply_learning_self_play(
-        training_board,
-        training_history,
-        training_ai_experiences,
+            move_count += 1
+
+        result = training_board.result() if training_board.is_game_over() else "*"
+        pgn_text = build_pgn_from_history(
+            training_history, result=result, self_play=True
+        )
+
+        record_game(result, pgn_text)
+
+        if result == "1-0":
+            aggregated_white.extend(training_ai_experiences["white"])
+            aggregated_black.extend(training_ai_experiences["black"])
+            white_outcome = "win"
+            black_outcome = "loss"
+        elif result == "0-1":
+            aggregated_white.extend(training_ai_experiences["white"])
+            aggregated_black.extend(training_ai_experiences["black"])
+            white_outcome = "loss"
+            black_outcome = "win"
+        else:
+            aggregated_white.extend(training_ai_experiences["white"])
+            aggregated_black.extend(training_ai_experiences["black"])
+            white_outcome = "draw"
+            black_outcome = "draw"
+
+        results.append(
+            {
+                "result": result,
+                "moves": len(training_history),
+                "final_fen": training_board.fen(),
+                "white_outcome": white_outcome,
+                "black_outcome": black_outcome,
+            }
+        )
+
+    learned_count = 0
+
+    white_norm = normalize_experiences(aggregated_white)
+    black_norm = normalize_experiences(aggregated_black)
+
+    if white_norm:
+        white_results = [r["white_outcome"] for r in results]
+        if white_results.count("win") >= max(
+            white_results.count("loss"), white_results.count("draw")
+        ):
+            learned_count += learn_from_game(white_norm, "win")
+        elif white_results.count("loss") >= white_results.count("draw"):
+            learned_count += learn_from_game(white_norm, "loss")
+        else:
+            learned_count += learn_from_game(white_norm, "draw")
+
+    if black_norm:
+        black_results = [r["black_outcome"] for r in results]
+        if black_results.count("win") >= max(
+            black_results.count("loss"), black_results.count("draw")
+        ):
+            learned_count += learn_from_game(black_norm, "win")
+        elif black_results.count("loss") >= black_results.count("draw"):
+            learned_count += learn_from_game(black_norm, "loss")
+        else:
+            learned_count += learn_from_game(black_norm, "draw")
+
+    print(
+        f"[LEARNING][SUCCESS] type=self_play_batch saved_game=True "
+        f"trained_games={len(results)} learned_positions={learned_count}"
     )
 
-    if result is None:
-        result = training_board.result() if training_board.is_game_over() else "*"
-
-    return {
-        "result": result,
-        "moves": len(training_history),
-        "final_fen": training_board.fen(),
-    }
+    return results, learned_count
 
 
 @app.route("/")
@@ -449,7 +436,13 @@ def move():
 
         ai_move_data = None
         if not board.is_game_over():
-            ai_move, exp = choose_move(board, depth=1, use_memory=True)
+            ai_move, exp = choose_move(
+                board,
+                depth=2,
+                use_memory=True,
+                memory_weight=12.0,
+                exploration_rate=0.03,
+            )
 
             if ai_move is not None:
                 ai_san = board.san(ai_move)
@@ -486,17 +479,19 @@ def train_self_play():
     try:
         data = request.get_json(silent=True) or {}
 
-        games_to_train = min(max(int(data.get("games", 10)), 1), 50)
-        depth = min(max(int(data.get("depth", 1)), 1), 3)
+        games_to_train = min(max(int(data.get("games", 10)), 1), 30)
+        depth = min(max(int(data.get("depth", 1)), 1), 2)
 
-        results = []
-        for _ in range(games_to_train):
-            results.append(run_self_play_game(depth=depth))
+        results, learned_count = train_self_play_batch(
+            games_to_train=games_to_train,
+            depth=depth,
+        )
 
         return jsonify(
             {
                 "status": "ok",
                 "trained_games": len(results),
+                "learned_positions": learned_count,
                 "results": results[-5:],
                 "jobs": get_job_counts(),
             }
@@ -512,13 +507,14 @@ def auto_train():
     try:
         data = request.get_json(silent=True) or {}
 
-        games_to_train = min(max(int(data.get("games", 10)), 1), 100)
-        depth = min(max(int(data.get("depth", 1)), 1), 3)
-        process_limit = min(max(int(data.get("process_limit", games_to_train)), 1), 200)
+        games_to_train = min(max(int(data.get("games", 10)), 1), 30)
+        depth = min(max(int(data.get("depth", 1)), 1), 2)
+        process_limit = min(max(int(data.get("process_limit", 10)), 1), 50)
 
-        training_results = []
-        for _ in range(games_to_train):
-            training_results.append(run_self_play_game(depth=depth))
+        results, learned_count = train_self_play_batch(
+            games_to_train=games_to_train,
+            depth=depth,
+        )
 
         processed_results = []
         for _ in range(process_limit):
@@ -530,8 +526,9 @@ def auto_train():
         return jsonify(
             {
                 "status": "ok",
-                "trained_games": len(training_results),
-                "last_training_results": training_results[-5:],
+                "trained_games": len(results),
+                "self_play_learned_positions": learned_count,
+                "last_training_results": results[-5:],
                 "processed_jobs": processed_results,
                 "jobs": get_job_counts(),
             }
