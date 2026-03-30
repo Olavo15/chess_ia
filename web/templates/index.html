@@ -371,16 +371,28 @@
       }
 
       async function resetGame() {
-        const res = await fetch("/reset", { method: "POST" });
-        const data = await res.json();
-
-        game = new Chess(data.fen);
-        currentFen = data.fen;
-        boardWidget.position(data.fen, false);
-        renderHistory(data.history || []);
-        highlightLastMove(data.last_move);
-        updateStatus(data);
-        clearLegalHighlights();
+        try {
+          const res = await fetch("/reset", { method: "POST" });
+          if (!res.ok) throw new Error("Erro ao resetar jogo");
+        
+          const data = await res.json();
+        
+          const jobsRes = await fetch("/process_learning_jobs", { method: "POST" });
+          if (!jobsRes.ok) throw new Error("Erro ao processar jobs de aprendizado");
+        
+          const jobsData = await jobsRes.json();
+          console.log("Jobs processados:", jobsData);
+        
+          game = new Chess(data.fen);
+          currentFen = data.fen;
+          boardWidget.position(data.fen, false);
+          renderHistory(data.history || []);
+          highlightLastMove(data.last_move);
+          updateStatus(data);
+          clearLegalHighlights();
+        } catch (error) {
+          console.error(error);
+        }
       }
 
       function initBoard() {
