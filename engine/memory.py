@@ -21,7 +21,7 @@ def get_conn():
             database_url,
             cursor_factory=RealDictCursor,
             sslmode=sslmode,
-            connect_timeout=5,
+            connect_timeout=15,
         )
 
     conn = sqlite3.connect("chess.db")

@@ -4,6 +4,7 @@ import os
 import time
 import uuid
 import traceback
+import threading
 
 from flask import Flask, render_template, request, jsonify, session
 import chess
@@ -156,21 +157,30 @@ def apply_learning_if_game_over(game):
     result = board.result()
     pgn_text = build_pgn_from_history(move_history, result=result, self_play=False)
 
-    enqueue_learning_job(
-        "player_vs_ai",
-        {
-            "result": result,
-            "pgn_text": pgn_text,
-            "ai_experiences": list(ai_experiences),
-        },
-    )
+    def background_enqueue(job_payload, experiences_len):
+        try:
+            enqueue_learning_job("player_vs_ai", job_payload)
+            print(
+                f"[LEARNING][ENQUEUED] "
+                f"type=player_vs_ai "
+                f"result={job_payload['result']} "
+                f"experiences={experiences_len}"
+            )
+        except Exception as e:
+            print(f"[LEARNING][ENQUEUE ERROR] {e}")
 
-    print(
-        f"[LEARNING][ENQUEUED] "
-        f"type=player_vs_ai "
-        f"result={result} "
-        f"experiences={len(ai_experiences)}"
-    )
+    threading.Thread(
+        target=background_enqueue,
+        args=(
+            {
+                "result": result,
+                "pgn_text": pgn_text,
+                "ai_experiences": list(ai_experiences),
+            },
+            len(ai_experiences),
+        ),
+        daemon=True,
+    ).start()
 
     game["finished_processed"] = True
     game["ai_experiences"] = []
