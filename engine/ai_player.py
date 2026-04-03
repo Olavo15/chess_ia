@@ -6,7 +6,13 @@ import torch
 from engine.neural_net import get_model, board_to_tensor
 from engine.memory import get_position_memory, position_hash
 
-NN_MODEL = get_model()
+_NN_MODEL = None
+
+def get_nn_model():
+    global _NN_MODEL
+    if _NN_MODEL is None:
+        _NN_MODEL = get_model()
+    return _NN_MODEL
 
 PIECE_VALUES = {
     chess.PAWN: 100,
@@ -34,7 +40,7 @@ def evaluate_position(board: chess.Board) -> float:
 
     tensor_state = board_to_tensor(board)
     with torch.no_grad():
-        score = NN_MODEL(tensor_state).item()
+        score = get_nn_model()(tensor_state).item()
 
     return score * 2000.0
 
