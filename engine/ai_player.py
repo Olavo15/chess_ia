@@ -3,6 +3,8 @@ import random
 import chess
 import torch
 
+torch.set_num_threads(1)
+
 from engine.neural_net import get_model, board_to_tensor
 from engine.memory import get_position_memory, position_hash
 
@@ -26,6 +28,8 @@ PIECE_VALUES = {
 CHECKMATE_SCORE = 100000
 
 
+_EVAL_CACHE = {}
+
 def evaluate_position(board: chess.Board) -> float:
     if board.is_checkmate():
         return -CHECKMATE_SCORE if board.turn == chess.WHITE else CHECKMATE_SCORE
@@ -38,11 +42,21 @@ def evaluate_position(board: chess.Board) -> float:
     ):
         return 0.0
 
+    fen_key = board.fen()
+    if fen_key in _EVAL_CACHE:
+        return _EVAL_CACHE[fen_key]
+
     tensor_state = board_to_tensor(board)
     with torch.no_grad():
         score = get_nn_model()(tensor_state).item()
 
-    return score * 2000.0
+    final_score = score * 2000.0
+    
+    if len(_EVAL_CACHE) > 20000:
+        _EVAL_CACHE.clear()
+        
+    _EVAL_CACHE[fen_key] = final_score
+    return final_score
 
 
 def order_moves(board: chess.Board, moves):
