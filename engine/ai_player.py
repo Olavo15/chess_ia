@@ -1,8 +1,12 @@
 import math
 import random
 import chess
+import torch
 
+from engine.neural_net import get_model, board_to_tensor
 from engine.memory import get_position_memory, position_hash
+
+NN_MODEL = get_model()
 
 PIECE_VALUES = {
     chess.PAWN: 100,
@@ -16,7 +20,7 @@ PIECE_VALUES = {
 CHECKMATE_SCORE = 100000
 
 
-def evaluate_position(board: chess.Board) -> int:
+def evaluate_position(board: chess.Board) -> float:
     if board.is_checkmate():
         return -CHECKMATE_SCORE if board.turn == chess.WHITE else CHECKMATE_SCORE
 
@@ -26,14 +30,13 @@ def evaluate_position(board: chess.Board) -> int:
         or board.is_seventyfive_moves()
         or board.is_fivefold_repetition()
     ):
-        return 0
+        return 0.0
 
-    score = 0
-    for piece_type, value in PIECE_VALUES.items():
-        score += len(board.pieces(piece_type, chess.WHITE)) * value
-        score -= len(board.pieces(piece_type, chess.BLACK)) * value
+    tensor_state = board_to_tensor(board)
+    with torch.no_grad():
+        score = NN_MODEL(tensor_state).item()
 
-    return score
+    return score * 2000.0
 
 
 def order_moves(board: chess.Board, moves):
@@ -131,7 +134,10 @@ def choose_move(
         calc_score = minimax(board, depth - 1, -math.inf, math.inf, not maximizing)
 
         raw_learned = memory_map.get(move.uci(), 0.0)
-        learned = raw_learned * 100.0
+        
+        sign = 1 if maximizing else -1
+
+        learned_bonus = (raw_learned * 100.0) * memory_weight * sign
 
         tactical_bonus = 0
 
@@ -144,9 +150,11 @@ def choose_move(
         if move.promotion:
             tactical_bonus += 1500
 
+        tactical_bonus *= sign
+
         board.pop()
 
-        total_score = calc_score + (learned * memory_weight) + tactical_bonus
+        total_score = calc_score + learned_bonus + tactical_bonus
 
         experiences.append((pos_hash, move.uci()))
 

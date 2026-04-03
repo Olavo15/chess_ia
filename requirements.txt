@@ -5,3 +5,6 @@ psycopg2-binary
 flake8
 black
 pytest
+torch
+torchvision
+numpy
