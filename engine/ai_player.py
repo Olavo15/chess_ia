@@ -10,11 +10,13 @@ from engine.memory import get_position_memory, position_hash
 
 _NN_MODEL = None
 
+
 def get_nn_model():
     global _NN_MODEL
     if _NN_MODEL is None:
         _NN_MODEL = get_model()
     return _NN_MODEL
+
 
 PIECE_VALUES = {
     chess.PAWN: 100,
@@ -29,6 +31,7 @@ CHECKMATE_SCORE = 100000
 
 
 _EVAL_CACHE = {}
+
 
 def evaluate_position(board: chess.Board) -> float:
     if board.is_checkmate():
@@ -51,10 +54,10 @@ def evaluate_position(board: chess.Board) -> float:
         score = get_nn_model()(tensor_state).item()
 
     final_score = score * 2000.0
-    
+
     if len(_EVAL_CACHE) > 20000:
         _EVAL_CACHE.clear()
-        
+
     _EVAL_CACHE[fen_key] = final_score
     return final_score
 
@@ -154,7 +157,7 @@ def choose_move(
         calc_score = minimax(board, depth - 1, -math.inf, math.inf, not maximizing)
 
         raw_learned = memory_map.get(move.uci(), 0.0)
-        
+
         sign = 1 if maximizing else -1
 
         learned_bonus = (raw_learned * 100.0) * memory_weight * sign
