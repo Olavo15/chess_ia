@@ -67,12 +67,12 @@ def board_to_tensor(board: chess.Board):
 
 def get_model(model_path="data/model_weights.pth"):
     model = ChessNet()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     if os.path.exists(model_path):
         try:
-            model.load_state_dict(
-                torch.load(model_path, map_location=torch.device("cpu"))
-            )
-            print(f"Pesos carregados de {model_path}")
+            model.load_state_dict(torch.load(model_path, map_location=device))
+            print(f"Pesos carregados de {model_path} ({device})")
         except Exception as e:
             print(f"Erro ao carregar pesos: {e}")
     else:
@@ -80,5 +80,6 @@ def get_model(model_path="data/model_weights.pth"):
             "Modelo sem pesos carregados. Iniciando com pesos aleatórios (A IA jogará aleatoriamente)."
         )
 
+    model.to(device)
     model.eval()
     return model

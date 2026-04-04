@@ -10,7 +10,7 @@ from engine.neural_net import ChessNet, board_to_tensor, get_model
 
 LEARNING_RATE = 0.0005
 BATCH_SIZE = 64
-EPOCHS = 600
+EPOCHS = 300
 MODEL_PATH = "data/model_weights.pth"
 PGN_DATASET = "data/kasparov.pgn"
 

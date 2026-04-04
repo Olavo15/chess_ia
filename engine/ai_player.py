@@ -49,13 +49,16 @@ def evaluate_position(board: chess.Board) -> float:
     if fen_key in _EVAL_CACHE:
         return _EVAL_CACHE[fen_key]
 
-    tensor_state = board_to_tensor(board)
+    model = get_nn_model()
+    device = next(model.parameters()).device
+    tensor_state = board_to_tensor(board).to(device)
+
     with torch.no_grad():
-        score = get_nn_model()(tensor_state).item()
+        score = model(tensor_state).item()
 
     final_score = score * 2000.0
 
-    if len(_EVAL_CACHE) > 20000:
+    if len(_EVAL_CACHE) > 200000:
         _EVAL_CACHE.clear()
 
     _EVAL_CACHE[fen_key] = final_score
@@ -128,10 +131,10 @@ def minimax(
 
 def choose_move(
     board: chess.Board,
-    depth: int = 2,
+    depth: int = 3,
     use_memory: bool = True,
     memory_weight: float = 12.0,
-    exploration_rate: float = 0.03,
+    exploration_rate: float = 0.01,
 ):
     legal_moves = list(board.legal_moves)
     if not legal_moves:
