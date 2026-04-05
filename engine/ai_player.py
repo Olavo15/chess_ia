@@ -25,23 +25,25 @@ PIECE_VALUES = {
 
 CHECKMATE_SCORE = 100000
 
+
 def get_nn_model():
     global _NN_MODEL, _NN_MODEL_MTIME, _EVAL_CACHE
     model_path = "data/model_weights.pth"
-    
+
     if os.path.exists(model_path):
         mtime = os.path.getmtime(model_path)
         if _NN_MODEL is None or mtime > _NN_MODEL_MTIME:
-            print(f"[{'Recarregando' if _NN_MODEL else 'Carregando'} pesos da IA neural...]")
+            print(
+                f"[{'Recarregando' if _NN_MODEL else 'Carregando'} pesos da IA neural...]"
+            )
             _NN_MODEL = get_model(model_path)
             _NN_MODEL_MTIME = mtime
             _EVAL_CACHE.clear()  # APAGA AS AVALIAÇÕES ANTIGAS DO MODELO ANTERIOR!
     else:
         if _NN_MODEL is None:
             _NN_MODEL = get_model()
-            
-    return _NN_MODEL
 
+    return _NN_MODEL
 
 
 def evaluate_position(board: chess.Board) -> float:
@@ -74,7 +76,7 @@ def evaluate_position(board: chess.Board) -> float:
             val = PIECE_VALUES[p.piece_type]
             material_score += val if p.color == chess.WHITE else -val
 
-    # A NN dita tendências de vitória (+- 500 pontos, ou seja 1/2 rainha) 
+    # A NN dita tendências de vitória (+- 500 pontos, ou seja 1/2 rainha)
     # e nós somamos isso à contagem de material real!
     final_score = (score * 500.0) + material_score
 
