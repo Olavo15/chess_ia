@@ -24,7 +24,7 @@ def stream_pgn_batches(pgn_path, batch_size=BATCH_SIZE, samples_per_game=15):
         print(f"Erro: Arquivo PGN {pgn_path} não encontrado.")
         return
 
-    with open(pgn_path, "r") as pgn_file:
+    with open(pgn_path, "r", encoding="utf-8", errors="replace") as pgn_file:
         x_batch = []
         y_batch = []
 

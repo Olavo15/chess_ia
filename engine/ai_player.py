@@ -12,23 +12,7 @@ import os
 
 _NN_MODEL = None
 _NN_MODEL_MTIME = 0
-
-def get_nn_model():
-    global _NN_MODEL, _NN_MODEL_MTIME
-    model_path = "data/model_weights.pth"
-    
-    if os.path.exists(model_path):
-        mtime = os.path.getmtime(model_path)
-        if _NN_MODEL is None or mtime > _NN_MODEL_MTIME:
-            print(f"[{'Recarregando' if _NN_MODEL else 'Carregando'} pesos da IA neural...]")
-            _NN_MODEL = get_model(model_path)
-            _NN_MODEL_MTIME = mtime
-    else:
-        if _NN_MODEL is None:
-            _NN_MODEL = get_model()
-            
-    return _NN_MODEL
-
+_EVAL_CACHE = {}
 
 PIECE_VALUES = {
     chess.PAWN: 100,
@@ -41,8 +25,23 @@ PIECE_VALUES = {
 
 CHECKMATE_SCORE = 100000
 
+def get_nn_model():
+    global _NN_MODEL, _NN_MODEL_MTIME, _EVAL_CACHE
+    model_path = "data/model_weights.pth"
+    
+    if os.path.exists(model_path):
+        mtime = os.path.getmtime(model_path)
+        if _NN_MODEL is None or mtime > _NN_MODEL_MTIME:
+            print(f"[{'Recarregando' if _NN_MODEL else 'Carregando'} pesos da IA neural...]")
+            _NN_MODEL = get_model(model_path)
+            _NN_MODEL_MTIME = mtime
+            _EVAL_CACHE.clear()  # APAGA AS AVALIAÇÕES ANTIGAS DO MODELO ANTERIOR!
+    else:
+        if _NN_MODEL is None:
+            _NN_MODEL = get_model()
+            
+    return _NN_MODEL
 
-_EVAL_CACHE = {}
 
 
 def evaluate_position(board: chess.Board) -> float:
@@ -68,7 +67,16 @@ def evaluate_position(board: chess.Board) -> float:
     with torch.no_grad():
         score = model(tensor_state).item()
 
-    final_score = score * 2000.0
+    material_score = 0.0
+    for sq in chess.SQUARES:
+        p = board.piece_at(sq)
+        if p:
+            val = PIECE_VALUES[p.piece_type]
+            material_score += val if p.color == chess.WHITE else -val
+
+    # A NN dita tendências de vitória (+- 500 pontos, ou seja 1/2 rainha) 
+    # e nós somamos isso à contagem de material real!
+    final_score = (score * 500.0) + material_score
 
     if len(_EVAL_CACHE) > 200000:
         _EVAL_CACHE.clear()
@@ -174,25 +182,11 @@ def choose_move(
         raw_learned = memory_map.get(move.uci(), 0.0)
 
         sign = 1 if maximizing else -1
-
         learned_bonus = (raw_learned * 100.0) * memory_weight * sign
-
-        tactical_bonus = 0
-
-        if board.is_check():
-            tactical_bonus += 120
-
-        if board.is_checkmate():
-            tactical_bonus += 50000
-
-        if move.promotion:
-            tactical_bonus += 1500
-
-        tactical_bonus *= sign
 
         board.pop()
 
-        total_score = calc_score + learned_bonus + tactical_bonus
+        total_score = calc_score + learned_bonus
 
         experiences.append((pos_hash, move.uci()))
 
