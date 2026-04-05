@@ -8,13 +8,25 @@ torch.set_num_threads(1)
 from engine.neural_net import get_model, board_to_tensor
 from engine.memory import get_position_memory, position_hash
 
-_NN_MODEL = None
+import os
 
+_NN_MODEL = None
+_NN_MODEL_MTIME = 0
 
 def get_nn_model():
-    global _NN_MODEL
-    if _NN_MODEL is None:
-        _NN_MODEL = get_model()
+    global _NN_MODEL, _NN_MODEL_MTIME
+    model_path = "data/model_weights.pth"
+    
+    if os.path.exists(model_path):
+        mtime = os.path.getmtime(model_path)
+        if _NN_MODEL is None or mtime > _NN_MODEL_MTIME:
+            print(f"[{'Recarregando' if _NN_MODEL else 'Carregando'} pesos da IA neural...]")
+            _NN_MODEL = get_model(model_path)
+            _NN_MODEL_MTIME = mtime
+    else:
+        if _NN_MODEL is None:
+            _NN_MODEL = get_model()
+            
     return _NN_MODEL
 
 

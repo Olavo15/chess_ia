@@ -25,7 +25,7 @@ class ChessNet(nn.Module):
 
         x = F.relu(self.fc1(x))
         x = self.fc2(x)
-        return x
+        return torch.tanh(x)
 
 
 def board_to_tensor(board: chess.Board):

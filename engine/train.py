@@ -10,7 +10,7 @@ from engine.neural_net import ChessNet, board_to_tensor, get_model
 
 LEARNING_RATE = 0.0005
 BATCH_SIZE = 64
-EPOCHS = 300
+EPOCHS = 20
 MODEL_PATH = "data/model_weights.pth"
 PGN_DATASET = "data/kasparov.pgn"
 
@@ -85,6 +85,8 @@ def train():
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
+    device = next(model.parameters()).device
+
     for epoch in range(EPOCHS):
         total_loss = 0.0
         batches_processed = 0
@@ -92,6 +94,9 @@ def train():
         print(f"\nIniciando Epoch {epoch+1}/{EPOCHS}...")
 
         for x_data, y_target in stream_pgn_batches(PGN_DATASET, BATCH_SIZE):
+            x_data = x_data.to(device)
+            y_target = y_target.to(device)
+
             optimizer.zero_grad()
 
             prediction = model(x_data)
@@ -103,7 +108,7 @@ def train():
             total_loss += loss.item()
             batches_processed += 1
 
-            if batches_processed % 50 == 0:
+            if batches_processed % 10 == 0:
                 print(
                     f"  [Epoch {epoch+1}] Lote {batches_processed} treinado. Loss média: {total_loss/batches_processed:.4f}"
                 )
