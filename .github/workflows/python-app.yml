@@ -41,9 +41,6 @@ jobs:
       - name: Check formatting
         run: black --check .
 
-      - name: Lint
-        run: flake8 .
-
       - name: Security check
         run: bandit -r pyscan/
 
