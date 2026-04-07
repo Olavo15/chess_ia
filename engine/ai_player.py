@@ -4,7 +4,6 @@ import chess
 import torch
 
 torch.set_num_threads(1)
-
 from engine.neural_net import get_model, board_to_tensor
 from engine.memory import get_position_memory, position_hash
 
@@ -76,8 +75,6 @@ def evaluate_position(board: chess.Board) -> float:
             val = PIECE_VALUES[p.piece_type]
             material_score += val if p.color == chess.WHITE else -val
 
-    # A NN dita tendências de vitória (+- 500 pontos, ou seja 1/2 rainha)
-    # e nós somamos isso à contagem de material real!
     final_score = (score * 500.0) + material_score
 
     if len(_EVAL_CACHE) > 200000:
