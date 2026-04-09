@@ -2,11 +2,14 @@ import json
 import os
 import sqlite3
 from collections import Counter
+from dotenv import load_dotenv
 
 import chess.polyglot
 import chess.pgn
 import psycopg2
 from psycopg2.extras import RealDictCursor, execute_values
+
+load_dotenv()
 
 
 def is_postgres():
@@ -483,16 +486,14 @@ def learn_from_game(experiences, result, alpha=0.65, chunk_size=200):
 
 
 def seed_openings_from_pgn(pgn_path, max_moves=10):
-    """
-    Lê um arquivo PGN e extrai apenas os primeiros lances (abertura)
-    para injetar na memória de movimentos da IA.
-    """
+
     if not os.path.exists(pgn_path):
         print(f"Erro: Arquivo PGN {pgn_path} não encontrado.")
         return 0
 
-    experiences = []
     games_parsed = 0
+    buffer = {"win": [], "loss": [], "draw": []}
+    buffer_size = 0
 
     with open(pgn_path, "r", encoding="utf-8", errors="replace") as pgn_file:
         while True:
@@ -500,8 +501,14 @@ def seed_openings_from_pgn(pgn_path, max_moves=10):
             if game is None:
                 break
 
-            result = game.headers.get("Result")
-            if result not in ["1-0", "0-1", "1/2-1/2"]:
+            result_str = game.headers.get("Result")
+            if result_str == "1-0":
+                res = "win"
+            elif result_str == "0-1":
+                res = "loss"
+            elif result_str == "1/2-1/2":
+                res = "draw"
+            else:
                 continue
 
             board = game.board()
@@ -510,22 +517,22 @@ def seed_openings_from_pgn(pgn_path, max_moves=10):
                     break
 
                 pos = position_hash(board)
-                experiences.append((pos, move.uci()))
+                buffer[res].append((pos, move.uci()))
                 board.push(move)
+                buffer_size += 1
 
             games_parsed += 1
-            if len(experiences) > 1000:
-                # Processa o que já tem pra não estourar a RAM
-                learn_from_game(
-                    experiences,
-                    "win" if result == "1-0" else "loss" if result == "0-1" else "draw",
-                )
-                experiences = []
-                print(f"Injetadas {games_parsed} partidas de abertura...")
 
-        if experiences:
-            learn_from_game(
-                experiences, "draw"
-            )  # Trata as sobras como empate se não souber o resultado
+            if buffer_size >= 2000:
+                for res_type, experiences in buffer.items():
+                    if experiences:
+                        learn_from_game(experiences, res_type)
+                        buffer[res_type] = []
+                buffer_size = 0
+                print(f"Processadas {games_parsed} partidas...")
+
+        for res_type, experiences in buffer.items():
+            if experiences:
+                learn_from_game(experiences, res_type)
 
     return games_parsed

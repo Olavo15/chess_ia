@@ -7,4 +7,4 @@ flake8
 black
 pytest
 torch
-numpy
+numpypython-dotenv
