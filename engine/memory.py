@@ -4,6 +4,7 @@ import sqlite3
 from collections import Counter
 
 import chess.polyglot
+import chess.pgn
 import psycopg2
 from psycopg2.extras import RealDictCursor, execute_values
 
@@ -44,19 +45,16 @@ def init_db():
         cur = conn.cursor()
 
         if is_postgres():
-            cur.execute(
-                """
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS games (
                     id SERIAL PRIMARY KEY,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     result TEXT NOT NULL,
                     moves_pgn TEXT NOT NULL
                 )
-                """
-            )
+                """)
 
-            cur.execute(
-                """
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS move_memory (
                     position_hash TEXT NOT NULL,
                     move_uci TEXT NOT NULL,
@@ -67,11 +65,9 @@ def init_db():
                     score DOUBLE PRECISION NOT NULL DEFAULT 0,
                     PRIMARY KEY (position_hash, move_uci)
                 )
-                """
-            )
+                """)
 
-            cur.execute(
-                """
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS learning_jobs (
                     id SERIAL PRIMARY KEY,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -83,22 +79,18 @@ def init_db():
                     error_message TEXT NULL,
                     success_message TEXT NULL
                 )
-                """
-            )
+                """)
         else:
-            cur.execute(
-                """
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS games (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     result TEXT NOT NULL,
                     moves_pgn TEXT NOT NULL
                 )
-                """
-            )
+                """)
 
-            cur.execute(
-                """
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS move_memory (
                     position_hash TEXT NOT NULL,
                     move_uci TEXT NOT NULL,
@@ -109,11 +101,9 @@ def init_db():
                     score REAL NOT NULL DEFAULT 0,
                     PRIMARY KEY (position_hash, move_uci)
                 )
-                """
-            )
+                """)
 
-            cur.execute(
-                """
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS learning_jobs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -125,8 +115,7 @@ def init_db():
                     error_message TEXT NULL,
                     success_message TEXT NULL
                 )
-                """
-            )
+                """)
 
         conn.commit()
 
@@ -176,15 +165,13 @@ def enqueue_learning_job(job_type, payload):
 def get_next_pending_job():
     with get_conn() as conn:
         cur = conn.cursor()
-        cur.execute(
-            """
+        cur.execute("""
             SELECT id, job_type, status, payload
             FROM learning_jobs
             WHERE status = 'pending'
             ORDER BY id ASC
             LIMIT 1
-            """
-        )
+            """)
         row = cur.fetchone()
 
     if row is None:
@@ -493,3 +480,52 @@ def learn_from_game(experiences, result, alpha=0.65, chunk_size=200):
         conn.commit()
 
     return total_processed
+
+
+def seed_openings_from_pgn(pgn_path, max_moves=10):
+    """
+    Lê um arquivo PGN e extrai apenas os primeiros lances (abertura)
+    para injetar na memória de movimentos da IA.
+    """
+    if not os.path.exists(pgn_path):
+        print(f"Erro: Arquivo PGN {pgn_path} não encontrado.")
+        return 0
+
+    experiences = []
+    games_parsed = 0
+
+    with open(pgn_path, "r", encoding="utf-8", errors="replace") as pgn_file:
+        while True:
+            game = chess.pgn.read_game(pgn_file)
+            if game is None:
+                break
+
+            result = game.headers.get("Result")
+            if result not in ["1-0", "0-1", "1/2-1/2"]:
+                continue
+
+            board = game.board()
+            for i, move in enumerate(game.mainline_moves()):
+                if i >= max_moves:
+                    break
+
+                pos = position_hash(board)
+                experiences.append((pos, move.uci()))
+                board.push(move)
+
+            games_parsed += 1
+            if len(experiences) > 1000:
+                # Processa o que já tem pra não estourar a RAM
+                learn_from_game(
+                    experiences,
+                    "win" if result == "1-0" else "loss" if result == "0-1" else "draw",
+                )
+                experiences = []
+                print(f"Injetadas {games_parsed} partidas de abertura...")
+
+        if experiences:
+            learn_from_game(
+                experiences, "draw"
+            )  # Trata as sobras como empate se não souber o resultado
+
+    return games_parsed

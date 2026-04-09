@@ -48,8 +48,7 @@ def stream_pgn_batches(pgn_path, batch_size=BATCH_SIZE, samples_per_game=15):
 
             for move in game.mainline_moves():
                 board.push(move)
-                if board.fullmove_number > 5:
-                    positions.append(board.copy())
+                positions.append(board.copy())
 
             if not positions:
                 continue
