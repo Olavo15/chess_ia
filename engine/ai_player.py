@@ -38,7 +38,7 @@ def get_nn_model():
             )
             _NN_MODEL = get_model(model_path)
             _NN_MODEL_MTIME = mtime
-            _EVAL_CACHE.clear()  # APAGA AS AVALIAÇÕES ANTIGAS DO MODELO ANTERIOR!
+            _EVAL_CACHE.clear()
     else:
         if _NN_MODEL is None:
             _NN_MODEL = get_model()
@@ -168,19 +168,16 @@ def choose_move(
     experiences = []
 
     try:
-        # Tenta usar o livro de aberturas físico (.bin) primeiro
         if os.path.exists(OPENING_BOOK_PATH):
             with chess.polyglot.open_reader(OPENING_BOOK_PATH) as reader:
                 entry = reader.find_all(board)
                 entries = list(entry)
                 if entries:
-                    # Escolhe um lance do livro baseado no peso/frequência
                     selected_entry = random.choices(
                         entries, weights=[e.weight for e in entries], k=1
                     )[0]
                     chosen_move = selected_entry.move
                     print(f"[IA usando lances do Manual de Abertura: {chosen_move}]")
-                    # Retornamos as experiências vazias pois não houve "cálculo"
                     return chosen_move, []
 
         memory_map = get_position_memory(board) if use_memory else {}
@@ -188,7 +185,6 @@ def choose_move(
         print("ERRO carregando memória ou livro de abertura:", e)
         memory_map = {}
 
-    # Aumenta peso da memória na abertura (primeiros 12 lances)
     current_memory_weight = memory_weight
     if board.fullmove_number <= 12:
         current_memory_weight *= 1.8

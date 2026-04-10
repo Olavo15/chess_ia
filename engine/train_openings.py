@@ -8,13 +8,12 @@ import os
 import sys
 from engine.neural_net import ChessNet, board_to_tensor, get_model
 
-# Configurações otimizadas para treinamento de abertura
 LEARNING_RATE = 0.0005
 BATCH_SIZE = 64
-EPOCHS = 10  # Aberturas tendem a convergir mais rápido
+EPOCHS = 10
 MODEL_PATH = "data/model_weights.pth"
 PGN_DATASET = "data/kasparov.pgn"
-MAX_OPENING_MOVE = 15  # Treina até o lance 15
+MAX_OPENING_MOVE = 35
 
 
 def stream_pgn_batches(pgn_path, batch_size=BATCH_SIZE, samples_per_game=20):
@@ -47,7 +46,6 @@ def stream_pgn_batches(pgn_path, batch_size=BATCH_SIZE, samples_per_game=20):
             board = game.board()
             positions = []
 
-            # Só coleta posições até o lance MAX_OPENING_MOVE
             for i, move in enumerate(game.mainline_moves()):
                 board.push(move)
                 if board.fullmove_number <= MAX_OPENING_MOVE:
