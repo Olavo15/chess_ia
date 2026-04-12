@@ -77,7 +77,7 @@ chess_ia/
 
 ### 🤖 IA
 
-- [ ] Melhorar heurística
+- [x] Melhorar heurística
 - [ ] Minimax + Alpha-Beta
 - [ ] Self-play automático
 - [x] Aprendizado persistente
@@ -86,7 +86,7 @@ chess_ia/
 
 - [ ] Ranking / Elo
 - [ ] Histórico completo de partidas
-- [ ] Exportação de PGN
+- [x] Exportação de PGN
 
 ### 🎨 Interface
 
@@ -97,7 +97,7 @@ chess_ia/
 ### 📊 Análise
 
 - [ ] Análise de partidas
-- [ ] Avaliação de posição
+- [x] Avaliação de posição
 
 # ⭐ Contribuições
 
