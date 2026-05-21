@@ -5,11 +5,11 @@ from datetime import datetime
 import chess
 import chess.pgn
 
-# Adiciona o diretório atual ao PATH para importação correta dos módulos locales
 sys.path.append(os.getcwd())
 
 from engine.memory import init_db, record_game, learn_from_game
 from engine.ai_player import choose_move
+
 
 def build_pgn_from_history(history, result="*", self_play=False):
     """
@@ -45,60 +45,69 @@ def build_pgn_from_history(history, result="*", self_play=False):
     print(game, file=exporter, end="\n")
     return exporter.getvalue()
 
+
 def run_auto_game():
     print("=== [KEEP-ALIVE] Iniciando partida de xadrez automatica ===")
-    
+
     init_db()
-    
+
     board = chess.Board()
     history = []
     ai_experiences = {
         "white": [],
         "black": [],
     }
-    
+
     move_count = 0
-    max_moves = 80 
-    
+    max_moves = 80
+
     while not board.is_game_over() and move_count < max_moves:
         side = "white" if board.turn == chess.WHITE else "black"
-        
+
         ai_move, exp = choose_move(
             board,
             depth=1,
             use_memory=False,
             exploration_rate=0.20,
         )
-        
+
         if ai_move is None:
-            print("[KEEP-ALIVE] Alerta: Nenhum lance disponível encontrado pelo jogador de IA.")
+            print(
+                "[KEEP-ALIVE] Alerta: Nenhum lance disponível encontrado pelo jogador de IA."
+            )
             break
-            
+
         san = board.san(ai_move)
         board.push(ai_move)
-        
+
         # Registra o histórico
-        history.append({
-            "uci": ai_move.uci(),
-            "san": san,
-            "from": chess.square_name(ai_move.from_square),
-            "to": chess.square_name(ai_move.to_square),
-            "promotion": chess.piece_symbol(ai_move.promotion) if ai_move.promotion else None,
-        })
-        
+        history.append(
+            {
+                "uci": ai_move.uci(),
+                "san": san,
+                "from": chess.square_name(ai_move.from_square),
+                "to": chess.square_name(ai_move.to_square),
+                "promotion": (
+                    chess.piece_symbol(ai_move.promotion) if ai_move.promotion else None
+                ),
+            }
+        )
+
         if exp:
             ai_experiences[side].extend(exp)
-            
+
         move_count += 1
-        
+
     result = board.result() if board.is_game_over() else "*"
-    print(f"[KEEP-ALIVE] Partida encerrada. Resultado: {result} em {move_count} lances.")
-    
+    print(
+        f"[KEEP-ALIVE] Partida encerrada. Resultado: {result} em {move_count} lances."
+    )
+
     pgn_text = build_pgn_from_history(history, result=result, self_play=True)
-    
+
     print("[KEEP-ALIVE] Gravando partida na tabela 'games'...")
     record_game(result, pgn_text)
-    
+
     print("[KEEP-ALIVE] Treinando modelo a partir das experiencias da partida...")
     learned_count = 0
     if result == "1-0":
@@ -116,9 +125,12 @@ def run_auto_game():
             learned_count += learn_from_game(ai_experiences["white"], "draw")
         if ai_experiences["black"]:
             learned_count += learn_from_game(ai_experiences["black"], "draw")
-            
-    print(f"[KEEP-ALIVE] Concluido! {learned_count} posicoes atualizadas na tabela 'move_memory'.")
+
+    print(
+        f"[KEEP-ALIVE] Concluido! {learned_count} posicoes atualizadas na tabela 'move_memory'."
+    )
     print("=== [KEEP-ALIVE] Banco de dados mantido ativo com sucesso! ===")
+
 
 if __name__ == "__main__":
     run_auto_game()
